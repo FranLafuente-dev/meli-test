@@ -116,6 +116,10 @@ window.meliOpenAuth = async (account) => {
     + `&code_challenge=${encodeURIComponent(challenge)}`
     + `&code_challenge_method=S256`;
 
+  console.log('[MELI] App ID:', appId);
+  console.log('[MELI] Redirect URI:', redirectUri);
+  console.log('[MELI] Auth URL:', url);
+
   if (meliAuthPopup && !meliAuthPopup.closed) meliAuthPopup.close();
   meliAuthPopup = window.open(url, 'meli_auth', 'width=620,height=740,left=100,top=60');
   if (!meliAuthPopup) { toast('Habilitá pop-ups para conectar MELI'); return; }
