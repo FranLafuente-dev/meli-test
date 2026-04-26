@@ -610,8 +610,18 @@ function dispTarget(tipo) {
 }
 function fmtDiff(diff) {
   if (diff <= 0) return 'Ya!';
-  const h=Math.floor(diff/3600000), m=Math.floor(diff/60000);
-  return h>0 ? `${h}h ${String(m%60).padStart(2,'0')}m` : `${m}m`;
+  const target = new Date(Date.now() + diff);
+  const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+  if (target <= todayEnd) {
+    const h = Math.floor(diff / 3600000), m = Math.floor(diff / 60000);
+    return h > 0 ? `${h}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`;
+  }
+  // Contar días hábiles hasta el día del target
+  let biz = 0;
+  const d = new Date(); d.setHours(0, 0, 0, 0);
+  const tDay = new Date(target); tDay.setHours(0, 0, 0, 0);
+  while (d < tDay) { d.setDate(d.getDate() + 1); if (d.getDay() !== 0 && d.getDay() !== 6) biz++; }
+  return biz === 1 ? '1 día hábil' : `${biz} días hábiles`;
 }
 function setupAlerts() {
   alertTimers.forEach(clearTimeout); alertTimers=[];

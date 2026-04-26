@@ -982,7 +982,6 @@ input:-webkit-autofill:focus {
 }
 
 /* ── MELI BADGE EN FAB ───────────────────────────────────────────────────── */
-.nueva-fab { position: relative; } /* asegurar contexto de posición */
 .meli-badge {
   display: none;
   position: absolute; top: -6px; left: 50%; transform: translateX(-50%);
