@@ -120,7 +120,8 @@ window.meliOpenAuth = async (account) => {
     + `&redirect_uri=${encodeURIComponent(redirectUri)}`
     + `&state=${encodeURIComponent(state)}`
     + `&code_challenge=${encodeURIComponent(challenge)}`
-    + `&code_challenge_method=S256`;
+    + `&code_challenge_method=S256`
+    + `&scope=offline_access`;
 
   console.log('[MELI] App ID:', appId);
   console.log('[MELI] Redirect URI:', redirectUri);
