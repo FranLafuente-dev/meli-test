@@ -610,22 +610,14 @@ function dispTarget(tipo) {
 }
 function fmtDiff(diff) {
   if (diff <= 0) return 'Ya!';
-  const target = new Date(Date.now() + diff);
-  const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
-  if (target <= todayEnd) {
-    const h = Math.floor(diff / 3600000), m = Math.floor(diff / 60000);
-    return h > 0 ? `${h}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`;
-  }
-  // Contar días hábiles hasta el día del target
-  let biz = 0;
-  const d = new Date(); d.setHours(0, 0, 0, 0);
-  const tDay = new Date(target); tDay.setHours(0, 0, 0, 0);
-  while (d < tDay) { d.setDate(d.getDate() + 1); if (d.getDay() !== 0 && d.getDay() !== 6) biz++; }
-  return biz === 1 ? '1 día hábil' : `${biz} días hábiles`;
+  const h=Math.floor(diff/3600000), m=Math.floor(diff/60000);
+  return h>0 ? `${h}h ${String(m%60).padStart(2,'0')}m` : `${m}m`;
 }
 function setupAlerts() {
   alertTimers.forEach(clearTimeout); alertTimers=[];
   const now=new Date();
+  const dow=now.getDay();
+  if (dow===0||dow===6) return; // sin alertas los fines de semana
   [
     {h:12,m:30,t:'warning',msg:'⏰ 30 min para despachar FLEX',tipo:'FLEX'},
     {h:12,m:50,t:'urgent', msg:'🚨 10 min para despachar FLEX',tipo:'FLEX'},
