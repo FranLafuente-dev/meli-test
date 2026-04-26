@@ -250,25 +250,40 @@ async function _fetchTodayOrders(account) {
   const ac = meliTokens[account];
   if (!ac?.userId) { console.warn(`[MELI] ${account}: sin userId`); return []; }
 
-  console.log(`[MELI] ${account}: fetchando órdenes para seller ${ac.userId}`);
+  console.log(`[MELI] ${account}: seller ${ac.userId} — verificando token...`);
   try {
-    // Traemos las 50 más recientes pagadas y filtramos fecha del lado cliente
-    const data = await _meliGet(
-      `/orders/search?seller=${ac.userId}&order.status=paid&limit=50&sort=date_desc`,
-      token
-    );
-    const total = (data.results || []).length;
-    console.log(`[MELI] ${account}: ${total} órdenes pagadas recientes`);
-
-    // Filtrar: últimas 48h (para no perder ventas de ayer tarde)
-    const cutoff = Date.now() - 48 * 3600 * 1000;
-    const filtered = (data.results || []).filter(o => new Date(o.date_created).getTime() >= cutoff);
-    console.log(`[MELI] ${account}: ${filtered.length} dentro de las últimas 48h`);
-    return filtered.map(o => ({ ...o, _account: account }));
+    const me = await _meliGet('/users/me', token);
+    console.log(`[MELI] ${account}: token OK — user ${me.id} (${me.nickname})`);
   } catch(e) {
-    console.warn(`[MELI] ${account} error:`, e.message);
+    console.warn(`[MELI] ${account}: token inválido —`, e.message);
     return [];
   }
+
+  // Probar dos variantes del endpoint
+  const endpoints = [
+    `/orders/search?seller=${ac.userId}&limit=50&sort=date_desc`,
+    `/users/${ac.userId}/orders/search?limit=50&sort=date_desc`,
+  ];
+  let results = null;
+  for (const ep of endpoints) {
+    try {
+      console.log(`[MELI] ${account}: probando ${ep}`);
+      const data = await _meliGet(ep, token);
+      console.log(`[MELI] ${account}: ${ep} → ${(data.results||[]).length} órdenes`);
+      results = data.results || [];
+      break;
+    } catch(e) {
+      console.warn(`[MELI] ${account}: ${ep} falló — ${e.message}`);
+    }
+  }
+  if (!results) return [];
+
+  const cutoff = Date.now() - 48 * 3600 * 1000;
+  const filtered = results.filter(o =>
+    o.status === 'paid' && new Date(o.date_created).getTime() >= cutoff
+  );
+  console.log(`[MELI] ${account}: ${filtered.length} órdenes pagadas en últimas 48h`);
+  return filtered.map(o => ({ ...o, _account: account }));
 }
 
 // ─── SYNC PRINCIPAL ───────────────────────────────────────────────────────────
