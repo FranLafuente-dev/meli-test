@@ -123,18 +123,6 @@
   <div class="sheet-title">Nueva venta</div>
   <div class="sheet-body">
 
-    <!-- PANEL SUGERENCIAS MELI — se oculta si no hay nada -->
-    <div class="meli-suggestions-panel hidden" id="meli-suggestions-panel">
-      <div class="meli-sug-header-row">
-        <div class="meli-sug-title">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M8 12l2.5 2.5L16 9"/></svg>
-          Pedidos sin cargar en MELI
-        </div>
-        <button class="meli-sug-toggle" id="btn-sug-toggle" onclick="document.getElementById('meli-suggestions-panel').classList.toggle('collapsed')">▾</button>
-      </div>
-      <div id="meli-suggestions-list" class="meli-suggestions-list"></div>
-    </div>
-
     <div class="form-group">
       <div class="form-label">Cuenta</div>
       <div class="toggle-group">
@@ -145,6 +133,16 @@
     <div class="form-group">
       <div class="form-label">Nombre comprador</div>
       <input class="form-input" id="f-nombre" type="text" placeholder="Nombre del comprador" autocomplete="off">
+      <div id="meli-chip-wrap" class="meli-chip-wrap hidden">
+        <button class="meli-chip" id="meli-chip-btn" onclick="toggleMeliPanel()">
+          <span class="meli-chip-badge" id="meli-chip-count">0</span>
+          <span id="meli-chip-label">pedidos pendientes de carga</span>
+          <span class="meli-chip-arrow">▾</span>
+        </button>
+        <div id="meli-suggestions-panel" class="meli-suggestions-panel collapsed">
+          <div id="meli-suggestions-list" class="meli-suggestions-list"></div>
+        </div>
+      </div>
     </div>
     <div id="enano-fields" style="display:none;flex-direction:column;gap:16px">
       <div class="form-group">

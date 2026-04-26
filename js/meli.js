@@ -476,13 +476,31 @@ function startMeliPolling() {
 }
 
 // ─── SUGERENCIAS EN FORMULARIO ────────────────────────────────────────────────
+window.toggleMeliPanel = function() {
+  document.getElementById('meli-suggestions-panel')?.classList.toggle('collapsed');
+  document.getElementById('meli-chip-btn')?.classList.toggle('open');
+};
+
 window.renderMeliSuggestions = function() {
-  const panel = document.getElementById('meli-suggestions-panel');
-  const list  = document.getElementById('meli-suggestions-list');
-  if (!panel || !list) return;
-  if (!meliSuggestions.length) { panel.classList.add('hidden'); return; }
-  panel.classList.remove('hidden');
-  list.innerHTML = meliSuggestions.map(sug => {
+  const chipWrap  = document.getElementById('meli-chip-wrap');
+  const chipCount = document.getElementById('meli-chip-count');
+  const chipLabel = document.getElementById('meli-chip-label');
+  const panel     = document.getElementById('meli-suggestions-panel');
+  const list      = document.getElementById('meli-suggestions-list');
+  if (!chipWrap || !list) return;
+
+  const cuenta   = document.querySelector('[data-cuenta].active')?.dataset.cuenta || null;
+  const filtered = cuenta ? meliSuggestions.filter(s => s.account === cuenta) : meliSuggestions;
+
+  if (!filtered.length) { chipWrap.classList.add('hidden'); return; }
+
+  const n = filtered.length;
+  chipWrap.classList.remove('hidden');
+  chipWrap.dataset.cuenta = cuenta || '';
+  chipCount.textContent = n;
+  chipLabel.textContent = `pedido${n > 1 ? 's' : ''} pendiente${n > 1 ? 's' : ''} de carga`;
+
+  list.innerHTML = filtered.map(sug => {
     const itemsTxt = sug.items.length
       ? sug.items.map(i => `${i.producto}${i.talle ? ' T'+i.talle : ' (talle?)'}`).join(', ')
       : '';
@@ -513,6 +531,7 @@ window.meliSelectSuggestion = function(meliOrderId) {
   meliSelectedSug = sug;
   _fillFormFromSuggestion(sug);
   document.getElementById('meli-suggestions-panel')?.classList.add('collapsed');
+  document.getElementById('meli-chip-btn')?.classList.remove('open');
 };
 
 function _fillFormFromSuggestion(sug) {

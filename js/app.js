@@ -1167,6 +1167,7 @@ function setCuenta(c) {
   curCuenta=c;
   document.querySelectorAll('[data-cuenta]').forEach(b=>b.classList.toggle('active',b.dataset.cuenta===c));
   V('enano-fields').style.display=c==='enano'?'flex':'none';
+  if (typeof renderMeliSuggestions === 'function') renderMeliSuggestions();
 }
 function setEnvio(t) {
   curEnvio=t;

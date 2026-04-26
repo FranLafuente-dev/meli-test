@@ -995,31 +995,40 @@ input:-webkit-autofill:focus {
 .meli-badge.show { display: block; }
 
 /* ── MELI SUGGESTIONS PANEL ──────────────────────────────────────────────── */
+/* ── MELI CHIP ──────────────────────────────────────────────────────────── */
+.meli-chip-wrap { margin-top: 8px; }
+.meli-chip-wrap.hidden { display: none; }
+.meli-chip {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 7px 12px;
+  background: rgba(48,176,199,0.08); border: 1px solid rgba(48,176,199,0.25);
+  border-radius: 20px; cursor: pointer;
+  color: var(--teal); font-size: 12px; font-weight: 600;
+  transition: background 0.15s;
+}
+.meli-chip:active { background: rgba(48,176,199,0.16); }
+.meli-chip-wrap[data-cuenta="enano"] .meli-chip {
+  background: rgba(139,92,246,0.08); border-color: rgba(139,92,246,0.25); color: var(--purple);
+}
+.meli-chip-badge {
+  background: var(--teal); color: #fff;
+  border-radius: 10px; padding: 1px 7px;
+  font-size: 11px; font-weight: 700; flex-shrink: 0;
+}
+.meli-chip-wrap[data-cuenta="enano"] .meli-chip-badge { background: var(--purple); }
+.meli-chip-arrow { margin-left: auto; font-size: 13px; transition: transform 0.2s; }
+.meli-chip.open .meli-chip-arrow { transform: rotate(180deg); }
+
 .meli-suggestions-panel {
-  background: rgba(48,176,199,0.06);
-  border: 1px solid rgba(48,176,199,0.20);
-  border-radius: var(--radius-sm);
-  margin-bottom: 16px;
+  background: rgba(48,176,199,0.04);
+  border: 1px solid rgba(48,176,199,0.18);
+  border-top: none; border-radius: 0 0 var(--radius-sm) var(--radius-sm);
   overflow: hidden;
-  transition: max-height 0.3s var(--ease-out);
 }
-.meli-suggestions-panel.hidden { display: none; }
+.meli-chip-wrap[data-cuenta="enano"] .meli-suggestions-panel {
+  background: rgba(139,92,246,0.04); border-color: rgba(139,92,246,0.18);
+}
 .meli-suggestions-panel.collapsed .meli-suggestions-list { display: none; }
-.meli-suggestions-panel.collapsed .meli-sug-toggle { transform: rotate(-90deg); }
-.meli-sug-header-row {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 12px 8px;
-}
-.meli-sug-title {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; font-weight: 600; color: var(--teal);
-  text-transform: uppercase; letter-spacing: 0.4px;
-}
-.meli-sug-toggle {
-  background: none; border: none; color: var(--teal);
-  font-size: 14px; cursor: pointer; padding: 2px 6px;
-  transition: transform 0.2s var(--ease-out);
-}
 .meli-suggestions-list { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 6px; }
 .meli-sug-item {
   display: flex; align-items: stretch; gap: 6px;
