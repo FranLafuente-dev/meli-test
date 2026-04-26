@@ -242,24 +242,30 @@ async function _meliGet(path, token) {
   return res.json();
 }
 
-// ─── FETCH ÓRDENES DEL DÍA ────────────────────────────────────────────────────
+// ─── FETCH ÓRDENES RECIENTES ──────────────────────────────────────────────────
 async function _fetchTodayOrders(account) {
   const token = await _meliGetToken(account);
-  if (!token) return [];
+  if (!token) { console.warn(`[MELI] ${account}: sin token`); return []; }
   const ac = meliTokens[account];
-  if (!ac?.userId) return [];
+  if (!ac?.userId) { console.warn(`[MELI] ${account}: sin userId`); return []; }
 
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const from = today.toISOString().replace(/\.\d{3}Z$/, '.000Z');
-
+  console.log(`[MELI] ${account}: fetchando órdenes para seller ${ac.userId}`);
   try {
+    // Traemos las 50 más recientes pagadas y filtramos fecha del lado cliente
     const data = await _meliGet(
-      `/orders/search?seller=${ac.userId}&order.status=paid&order.date_created.from=${encodeURIComponent(from)}&limit=50&sort=date_desc`,
+      `/orders/search?seller=${ac.userId}&order.status=paid&limit=50&sort=date_desc`,
       token
     );
-    return (data.results || []).map(o => ({ ...o, _account: account }));
+    const total = (data.results || []).length;
+    console.log(`[MELI] ${account}: ${total} órdenes pagadas recientes`);
+
+    // Filtrar: últimas 48h (para no perder ventas de ayer tarde)
+    const cutoff = Date.now() - 48 * 3600 * 1000;
+    const filtered = (data.results || []).filter(o => new Date(o.date_created).getTime() >= cutoff);
+    console.log(`[MELI] ${account}: ${filtered.length} dentro de las últimas 48h`);
+    return filtered.map(o => ({ ...o, _account: account }));
   } catch(e) {
-    console.warn(`MELI ${account} orders:`, e.message);
+    console.warn(`[MELI] ${account} error:`, e.message);
     return [];
   }
 }
@@ -283,10 +289,12 @@ async function syncMeli(showToast = true) {
 
     const suggestions = [];
     for (const o of all) {
-      const id = String(o.id);
-      if (meliIgnoredIds.has(id))  continue;
-      if (_isMeliOrderLoaded(id))  continue;
-      if (_isMeliDispatched(o))    continue;
+      const id        = String(o.id);
+      const ignored   = meliIgnoredIds.has(id);
+      const loaded    = _isMeliOrderLoaded(id);
+      const dispatched= _isMeliDispatched(o);
+      console.log(`[MELI] orden ${id} (${o._account}) status=${o.status} shipping=${o.shipping?.status} → ignored=${ignored} loaded=${loaded} dispatched=${dispatched}`);
+      if (ignored || loaded || dispatched) continue;
       suggestions.push(_buildSuggestion(o));
     }
     meliSuggestions = suggestions;
@@ -592,10 +600,11 @@ function _setStatusEl(elId, ac, label) {
   if (!el) return;
   if (ac && Date.now() < ac.expiresAt) {
     const mins = Math.round((ac.expiresAt - Date.now()) / 60000);
-    el.textContent = `✓ Conectado (${mins < 60 ? mins + 'min' : Math.round(mins/60) + 'h'})`;
+    const resta = mins < 60 ? `${mins} min` : `${Math.round(mins/60)}h`;
+    el.textContent = `✓ Conectado — renueva en ${resta}`;
     el.className = 'meli-conn-status connected';
   } else if (ac?.refreshToken) {
-    el.textContent = 'Renovando...';
+    el.textContent = '↻ Renovando token...';
     el.className = 'meli-conn-status connected';
   } else {
     el.textContent = 'No conectado';
