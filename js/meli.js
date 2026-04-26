@@ -3,16 +3,18 @@
 // Nuevas colecciones: meta/meliConfig · meta/meliIgnored
 
 // ─── CONSTANTES ───────────────────────────────────────────────────────────────
-const MELI_AUTH_URL   = 'https://auth.mercadolibre.com.ar/authorization';
-const MELI_TOKEN_URL  = 'https://api.mercadolibre.com/oauth/token';
-const MELI_API_BASE   = 'https://api.mercadolibre.com';
-const MELI_POLL_MS    = 15 * 60 * 1000;
-const LS_MELI_TOKENS  = 'fs_meli_tokens_v1';
-const LS_MELI_IGNORED = 'fs_meli_ignored_v1';
-const LS_MELI_APPID   = 'fs_meli_appid_v1';
+const MELI_AUTH_URL    = 'https://auth.mercadolibre.com.ar/authorization';
+const MELI_TOKEN_URL   = 'https://api.mercadolibre.com/oauth/token';
+const MELI_API_BASE    = 'https://api.mercadolibre.com';
+const MELI_POLL_MS     = 15 * 60 * 1000;
+const LS_MELI_TOKENS   = 'fs_meli_tokens_v1';
+const LS_MELI_IGNORED  = 'fs_meli_ignored_v1';
+const LS_MELI_APPID    = 'fs_meli_appid_v1';
+const LS_MELI_SECRET   = 'fs_meli_secret_v1';
 
 // ─── ESTADO ───────────────────────────────────────────────────────────────────
 let meliAppId       = '';
+let meliSecret      = '';
 let meliTokens      = { capi: null, enano: null };
 let meliIgnoredIds  = new Set();
 let meliSuggestions = [];
@@ -30,7 +32,8 @@ async function meliInit() {
 }
 
 function _meliLoadLocal() {
-  try { const v = localStorage.getItem(LS_MELI_APPID); if (v) meliAppId = v; } catch(e) {}
+  try { const v = localStorage.getItem(LS_MELI_APPID);   if (v) meliAppId  = v; } catch(e) {}
+  try { const v = localStorage.getItem(LS_MELI_SECRET);  if (v) meliSecret = v; } catch(e) {}
   try {
     const t = JSON.parse(localStorage.getItem(LS_MELI_TOKENS) || 'null');
     if (t) { meliTokens.capi = t.capi || null; meliTokens.enano = t.enano || null; }
@@ -46,7 +49,8 @@ async function _meliLoadFirestore() {
     const s = await db.collection('meta').doc('meliConfig').get();
     if (s.exists) {
       const d = s.data();
-      if (d.appId) { meliAppId = d.appId; localStorage.setItem(LS_MELI_APPID, d.appId); }
+      if (d.appId)  { meliAppId  = d.appId;  localStorage.setItem(LS_MELI_APPID,  d.appId);  }
+      if (d.secret) { meliSecret = d.secret; localStorage.setItem(LS_MELI_SECRET, d.secret); }
       if (d.capi)  meliTokens.capi  = d.capi;
       if (d.enano) meliTokens.enano = d.enano;
       _meliSaveTokensLocal();
@@ -67,9 +71,11 @@ function _meliSaveTokensLocal() {
 
 function _meliSaveConfig() {
   _meliSaveTokensLocal();
-  try { localStorage.setItem(LS_MELI_APPID, meliAppId); } catch(e) {}
+  try { localStorage.setItem(LS_MELI_APPID,  meliAppId);  } catch(e) {}
+  try { localStorage.setItem(LS_MELI_SECRET, meliSecret); } catch(e) {}
   db.collection('meta').doc('meliConfig').set({
-    appId: meliAppId, capi: meliTokens.capi || null, enano: meliTokens.enano || null,
+    appId: meliAppId, secret: meliSecret || null,
+    capi: meliTokens.capi || null, enano: meliTokens.enano || null,
   }).catch(() => {});
 }
 
@@ -143,21 +149,23 @@ window.meliOpenAuth = async (account) => {
   }, 600);
 };
 
-// Intercambio code → tokens (PKCE, sin client_secret)
 async function _meliExchangeCode(account, code, verifier, redirectUri) {
   try {
+    const params = {
+      grant_type:    'authorization_code',
+      client_id:     meliAppId,
+      code,
+      redirect_uri:  redirectUri,
+      code_verifier: verifier,
+    };
+    if (meliSecret) params.client_secret = meliSecret;
     const res = await fetch(MELI_TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-      body: new URLSearchParams({
-        grant_type:    'authorization_code',
-        client_id:     meliAppId,
-        code,
-        redirect_uri:  redirectUri,
-        code_verifier: verifier,
-      }),
+      body: new URLSearchParams(params),
     });
     const data = await res.json();
+    console.log('[MELI] exchange response:', res.status, JSON.stringify(data));
     if (!res.ok || !data.access_token) {
       toast(`Error MELI: ${data.message || data.error || res.status}`);
       return;
@@ -180,19 +188,20 @@ async function _meliExchangeCode(account, code, verifier, redirectUri) {
   }
 }
 
-// Renovar token con refresh_token
 async function _meliRefreshToken(account) {
   const ac = meliTokens[account];
   if (!ac?.refreshToken) return false;
   try {
+    const params = {
+      grant_type:    'refresh_token',
+      client_id:     meliAppId,
+      refresh_token: ac.refreshToken,
+    };
+    if (meliSecret) params.client_secret = meliSecret;
     const res = await fetch(MELI_TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-      body: new URLSearchParams({
-        grant_type:    'refresh_token',
-        client_id:     meliAppId,
-        refresh_token: ac.refreshToken,
-      }),
+      body: new URLSearchParams(params),
     });
     const data = await res.json();
     if (!res.ok || !data.access_token) return false;
@@ -571,8 +580,12 @@ async function _updateTracking(freshMeliOrders) {
 function updateMeliSettingsUI() {
   _setStatusEl('meli-capi-status',  meliTokens.capi,  'CAPI');
   _setStatusEl('meli-enano-status', meliTokens.enano, 'ENANO');
-  const inp = document.getElementById('meli-app-id-input');
-  if (inp && meliAppId && !inp.value) inp.value = meliAppId;
+  const inpId  = document.getElementById('meli-app-id-input');
+  if (inpId  && meliAppId  && !inpId.value)  inpId.value  = meliAppId;
+  const inpSec = document.getElementById('meli-secret-input');
+  if (inpSec && meliSecret && !inpSec.value) inpSec.value = meliSecret;
+  const uriEl = document.getElementById('meli-redirect-uri');
+  if (uriEl && !uriEl.textContent) uriEl.textContent = window.location.origin + window.location.pathname;
 }
 function _setStatusEl(elId, ac, label) {
   const el = document.getElementById(elId);
@@ -594,4 +607,10 @@ window.meliSaveAppId = function() {
   const val = inp?.value?.trim();
   if (!val) { toast('Ingresá el App ID'); return; }
   meliAppId = val; _meliSaveConfig(); toast('App ID guardado ✓');
+};
+window.meliSaveSecret = function() {
+  const inp = document.getElementById('meli-secret-input');
+  const val = inp?.value?.trim();
+  if (!val) { toast('Ingresá el Secret Key'); return; }
+  meliSecret = val; _meliSaveConfig(); toast('Secret Key guardado ✓');
 };

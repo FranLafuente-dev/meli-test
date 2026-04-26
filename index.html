@@ -363,10 +363,16 @@
   <div class="sheet-body">
     <div class="form-group">
       <div class="form-label">App ID (Client ID)</div>
-      <input class="form-input" id="meli-app-id-input" type="text" placeholder="Ej: 123456789" autocomplete="off" inputmode="numeric">
-      <div class="hint-text" style="margin-top:6px">Lo encontrás en developers.mercadolibre.com.ar</div>
+      <input class="form-input" id="meli-app-id-input" type="text" placeholder="Ej: 8662000739611265" autocomplete="off" inputmode="numeric">
     </div>
-    <button class="btn btn-ghost btn-sm" style="margin-bottom:16px" onclick="meliSaveAppId()">Guardar App ID</button>
+    <button class="btn btn-ghost btn-sm" style="margin-bottom:12px" onclick="meliSaveAppId()">Guardar App ID</button>
+
+    <div class="form-group">
+      <div class="form-label">Secret Key (Clave secreta)</div>
+      <input class="form-input" id="meli-secret-input" type="password" placeholder="Secret Key de tu app MELI" autocomplete="off">
+      <div class="hint-text" style="margin-top:6px">Lo encontrás en developers.mercadolibre.com.ar junto al App ID</div>
+    </div>
+    <button class="btn btn-ghost btn-sm" style="margin-bottom:16px" onclick="meliSaveSecret()">Guardar Secret Key</button>
 
     <div class="meli-accounts-grid">
       <div class="meli-account-card">
