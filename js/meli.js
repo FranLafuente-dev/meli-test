@@ -4,8 +4,7 @@
 
 // ─── CONSTANTES ───────────────────────────────────────────────────────────────
 const MELI_AUTH_URL    = 'https://auth.mercadolibre.com.ar/authorization';
-const MELI_TOKEN_URL   = 'https://api.mercadolibre.com/oauth/token';
-const MELI_API_BASE    = 'https://api.mercadolibre.com';
+const MELI_WORKER_BASE = 'https://meli-test.lafuentefranciscolucas.workers.dev';
 const MELI_POLL_MS     = 15 * 60 * 1000;
 const LS_MELI_TOKENS   = 'fs_meli_tokens_v1';
 const LS_MELI_IGNORED  = 'fs_meli_ignored_v1';
@@ -160,7 +159,7 @@ async function _meliExchangeCode(account, code, verifier, redirectUri) {
       code_verifier: verifier,
     };
     if (meliSecret) params.client_secret = meliSecret;
-    const res = await fetch(MELI_TOKEN_URL, {
+    const res = await fetch(`${MELI_WORKER_BASE}/api/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
       body: new URLSearchParams(params),
@@ -174,7 +173,7 @@ async function _meliExchangeCode(account, code, verifier, redirectUri) {
     meliTokens[account] = {
       token:        data.access_token,
       refreshToken: data.refresh_token || null,
-      userId:       String(data.user_id),
+      userId:       String(data._user?.id || data.user_id),
       expiresAt:    Date.now() + (data.expires_in * 1000) - 120000,
     };
     _meliSaveConfig();
@@ -199,7 +198,7 @@ async function _meliRefreshToken(account) {
       refresh_token: ac.refreshToken,
     };
     if (meliSecret) params.client_secret = meliSecret;
-    const res = await fetch(MELI_TOKEN_URL, {
+    const res = await fetch(`${MELI_WORKER_BASE}/api/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
       body: new URLSearchParams(params),
@@ -236,7 +235,7 @@ async function _meliGetToken(account) {
 
 // ─── API HELPERS ──────────────────────────────────────────────────────────────
 async function _meliGet(path, token) {
-  const res = await fetch(`${MELI_API_BASE}${path}`, {
+  const res = await fetch(`${MELI_WORKER_BASE}/api/meli${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`MELI ${res.status} ${path}`);
