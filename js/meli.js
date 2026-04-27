@@ -570,22 +570,16 @@ window.meliSelectSuggestion = function(meliOrderId) {
 
 function _fillFormFromSuggestion(sug) {
   setCuenta(sug.account || 'capi');
-  setEnvio(sug.tipoEnvio || 'FLEX');
   V('f-nombre').value = sug.nombre || '';
-  if (sug.tipoEnvio === 'FLEX') {
-    if (sug.importe) V('f-importe-flex').value = Math.round(sug.importe);
-    if (sug.localidad) {
-      const norm = normalizeStr(sug.localidad.toLowerCase());
-      const zone = zones.find(z =>
-        normalizeStr(z.localidad.toLowerCase()).includes(norm) ||
-        norm.includes(normalizeStr(z.localidad.toLowerCase()))
-      );
-      if (zone) { formEnvio = { localidad: zone.localidad, zona: zone.zona, importe: zone.importe }; showZoneSelected(); }
-      else V('f-localidad').value = sug.localidad;
-      updateNeto();
-    }
-  } else {
-    if (sug.importe) V('f-importe-pe').value = Math.round(sug.importe);
+  if (sug.localidad) {
+    const norm = normalizeStr(sug.localidad.toLowerCase());
+    const zone = zones.find(z =>
+      normalizeStr(z.localidad.toLowerCase()).includes(norm) ||
+      norm.includes(normalizeStr(z.localidad.toLowerCase()))
+    );
+    if (zone) { formEnvio = { localidad: zone.localidad, zona: zone.zona, importe: zone.importe }; showZoneSelected(); }
+    else V('f-localidad').value = sug.localidad;
+    updateNeto();
   }
   if (sug.account === 'enano' && sug.provincia) V('f-provincia').value = sug.provincia;
   const validItems = sug.items.filter(i => i.talle);
