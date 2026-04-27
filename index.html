@@ -133,6 +133,10 @@
     <div class="form-group">
       <div class="form-label">Nombre comprador</div>
       <input class="form-input" id="f-nombre" type="text" placeholder="Nombre del comprador" autocomplete="off">
+      <div id="meli-order-tag" class="meli-order-tag hidden">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 7H4a2 2 0 00-2 2v6a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg>
+        Orden MELI <span id="meli-order-num"></span>
+      </div>
       <div id="meli-chip-wrap" class="meli-chip-wrap hidden">
         <button class="meli-chip" id="meli-chip-btn" onclick="toggleMeliPanel()">
           <span class="meli-chip-badge" id="meli-chip-count">0</span>

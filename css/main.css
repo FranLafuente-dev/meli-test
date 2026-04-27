@@ -995,6 +995,15 @@ input:-webkit-autofill:focus {
 .meli-badge.show { display: block; }
 
 /* ── MELI SUGGESTIONS PANEL ──────────────────────────────────────────────── */
+/* ── MELI ORDER TAG ─────────────────────────────────────────────────────── */
+.meli-order-tag {
+  display: flex; align-items: center; gap: 5px;
+  margin-top: 7px;
+  font-size: 11px; color: var(--teal); font-weight: 500;
+}
+.meli-order-tag.hidden { display: none; }
+.meli-order-tag span { font-weight: 700; font-family: monospace; letter-spacing: 0.3px; }
+
 /* ── MELI CHIP ──────────────────────────────────────────────────────────── */
 .meli-chip-wrap { margin-top: 8px; }
 .meli-chip-wrap.hidden { display: none; }

@@ -571,6 +571,9 @@ window.meliSelectSuggestion = function(meliOrderId) {
 function _fillFormFromSuggestion(sug) {
   setCuenta(sug.account || 'capi');
   V('f-nombre').value = sug.nombre || '';
+  const tag = document.getElementById('meli-order-tag');
+  const num = document.getElementById('meli-order-num');
+  if (tag && num) { num.textContent = '#' + sug.meliOrderId; tag.classList.remove('hidden'); }
   if (sug.localidad) {
     const norm = normalizeStr(sug.localidad.toLowerCase());
     const zone = zones.find(z =>
@@ -605,7 +608,11 @@ function meliMarkLoaded(meliOrderId) {
 window.meliMarkLoaded = meliMarkLoaded;
 
 function meliGetSelectedId()  { return meliSelectedSug?.meliOrderId || null; }
-function meliResetSelected()  { meliSelectedSug = null; }
+function meliResetSelected() {
+  meliSelectedSug = null;
+  const tag = document.getElementById('meli-order-tag');
+  if (tag) tag.classList.add('hidden');
+}
 window.meliGetSelectedId  = meliGetSelectedId;
 window.meliResetSelected  = meliResetSelected;
 
