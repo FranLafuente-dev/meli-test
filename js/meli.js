@@ -678,6 +678,13 @@ window.meliSaveAppId = function() {
   if (!val) { toast('Ingresá el App ID'); return; }
   meliAppId = val; _meliSaveConfig(); toast('App ID guardado ✓');
 };
+window.meliClearIgnored = function() {
+  meliIgnoredIds = new Set();
+  _meliSaveIgnored();
+  toast('Pedidos descartados recuperados ✓');
+  syncMeli(false);
+};
+
 window.meliSaveSecret = function() {
   const inp = document.getElementById('meli-secret-input');
   const val = inp?.value?.trim();
