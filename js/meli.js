@@ -302,7 +302,7 @@ async function syncMeli(showToast = true) {
     ]);
     const all = [...capiOrders, ...enanoOrders];
 
-    const suggestions = [];
+    const candidates = [];
     for (const o of all) {
       const id        = String(o.id);
       const ignored   = meliIgnoredIds.has(id);
@@ -310,8 +310,10 @@ async function syncMeli(showToast = true) {
       const dispatched= _isMeliDispatched(o);
       console.log(`[MELI] orden ${id} (${o._account}) status=${o.status} shipping=${o.shipping?.status} → ignored=${ignored} loaded=${loaded} dispatched=${dispatched}`);
       if (ignored || loaded || dispatched) continue;
-      suggestions.push(_buildSuggestion(o));
+      candidates.push(o);
     }
+    if (candidates.length) await _enrichWithReceiverName(candidates);
+    const suggestions = candidates.map(o => _buildSuggestion(o));
     meliSuggestions = suggestions;
     updateMeliBadge();
 
@@ -333,6 +335,25 @@ async function syncMeli(showToast = true) {
 }
 window.syncMeli = syncMeli;
 
+// ─── ENRIQUECIMIENTO DE NOMBRES ──────────────────────────────────────────────
+async function _enrichWithReceiverName(orders) {
+  await Promise.all(orders.map(async o => {
+    const rec = o.shipping?.receiver_address;
+    if (rec?.receiver_name) return;
+    if (o.buyer?.first_name) return;
+    if (!o.shipping?.id) return;
+    try {
+      const token = await _meliGetToken(o._account);
+      if (!token) return;
+      const shipment = await _meliGet(`/shipments/${o.shipping.id}`, token);
+      if (shipment.receiver_address?.receiver_name) {
+        if (!o.shipping.receiver_address) o.shipping.receiver_address = {};
+        o.shipping.receiver_address.receiver_name = shipment.receiver_address.receiver_name;
+      }
+    } catch(e) { console.warn(`[MELI] shipment ${o.shipping?.id}:`, e.message); }
+  }));
+}
+
 // ─── FILTROS ──────────────────────────────────────────────────────────────────
 function _isMeliOrderLoaded(meliId) {
   return orders.some(o => String(o.meliOrderId) === meliId);
@@ -351,7 +372,7 @@ function _buildSuggestion(order) {
     tipoEnvio,
     localidad:   _getLocality(order),
     provincia:   _getProvince(order),
-    importe:     _getAmount(order, tipoEnvio),
+    importe:     _getAmount(order),
     items:       _parseItems(order.order_items),
     dateCreated: order.date_created,
   };
@@ -380,12 +401,10 @@ function _getProvince(order) {
   const a = order.shipping?.receiver_address;
   return a?.state?.name || '';
 }
-function _getAmount(order, tipoEnvio) {
+function _getAmount(order) {
   const pay = (order.payments || [])[0];
   if (!pay) return 0;
-  return tipoEnvio === 'FLEX'
-    ? (pay.total_paid_amount || pay.transaction_amount || 0)
-    : (pay.net_received_amount || pay.total_paid_amount || 0);
+  return pay.net_received_amount || pay.total_paid_amount || 0;
 }
 
 // ─── PARSEO DE ÍTEMS ─────────────────────────────────────────────────────────
