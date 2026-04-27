@@ -83,6 +83,15 @@ function _meliSaveIgnored() {
   db.collection('meta').doc('meliIgnored').set({ ids: [...meliIgnoredIds] }).catch(() => {});
 }
 
+window.meliClearIgnored = async function() {
+  const prevCount = meliIgnoredIds.size;
+  meliIgnoredIds = new Set();
+  _meliSaveIgnored();
+  await syncMeli(false);
+  const pending = meliSuggestions.length;
+  toast(`${prevCount} pedido${prevCount !== 1 ? 's' : ''} recuperado${prevCount !== 1 ? 's' : ''} — quedan ${pending} pendiente${pending !== 1 ? 's' : ''}`);
+};
+
 // ─── PKCE ─────────────────────────────────────────────────────────────────────
 function _b64url(buf) {
   return btoa(String.fromCharCode(...new Uint8Array(buf)))
@@ -676,13 +685,6 @@ window.meliSaveAppId = function() {
   if (!val) { toast('Ingresá el App ID'); return; }
   meliAppId = val; _meliSaveConfig(); toast('App ID guardado ✓');
 };
-window.meliClearIgnored = function() {
-  meliIgnoredIds = new Set();
-  _meliSaveIgnored();
-  toast('Pedidos descartados recuperados ✓');
-  syncMeli(false);
-};
-
 window.meliSaveSecret = function() {
   const inp = document.getElementById('meli-secret-input');
   const val = inp?.value?.trim();
