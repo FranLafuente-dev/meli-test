@@ -379,10 +379,19 @@ function _buildSuggestion(order) {
 }
 
 function _detectShipping(order) {
-  const logistic = order.shipping?.logistic_type || '';
-  const tags = order.tags || [];
-  if (logistic === 'self_service' || tags.includes('self_service_in') || tags.includes('fulfillment'))
-    return 'FLEX';
+  const logistic  = order.shipping?.logistic_type || '';
+  const mode      = order.shipping?.mode || '';
+  const tags      = order.tags || [];
+  const shipTags  = order.shipping?.tags || [];
+  const allTags   = [...tags, ...shipTags].map(t => String(t).toLowerCase());
+
+  const flexLogistics = ['self_service', 'me2', 'fulfillment', 'cross_docking'];
+  const flexTagWords  = ['flex', 'self_service', 'fulfillment', 'delivered_by_seller', 'same_day'];
+
+  if (flexLogistics.includes(logistic)) return 'FLEX';
+  if (mode === 'me2') return 'FLEX';
+  if (allTags.some(t => flexTagWords.some(w => t.includes(w)))) return 'FLEX';
+  console.log(`[MELI] shipping detect — logistic=${logistic} mode=${mode} tags=${JSON.stringify([...tags,...shipTags])}`);
   return 'PE';
 }
 function _getBuyerName(order) {
@@ -404,7 +413,7 @@ function _getProvince(order) {
 function _getAmount(order) {
   const pay = (order.payments || [])[0];
   if (!pay) return 0;
-  return pay.net_received_amount || pay.total_paid_amount || 0;
+  return pay.net_received_amount || 0;
 }
 
 // ─── PARSEO DE ÍTEMS ─────────────────────────────────────────────────────────
