@@ -312,7 +312,7 @@ async function syncMeli(showToast = true) {
       if (ignored || loaded || dispatched) continue;
       candidates.push(o);
     }
-    if (candidates.length) await _enrichWithReceiverName(candidates);
+    if (candidates.length) await _enrichFromShipment(candidates);
     const suggestions = candidates.map(o => _buildSuggestion(o));
     meliSuggestions = suggestions;
     updateMeliBadge();
@@ -336,20 +336,19 @@ async function syncMeli(showToast = true) {
 window.syncMeli = syncMeli;
 
 // ─── ENRIQUECIMIENTO DE NOMBRES ──────────────────────────────────────────────
-async function _enrichWithReceiverName(orders) {
+async function _enrichFromShipment(orders) {
   await Promise.all(orders.map(async o => {
-    const rec = o.shipping?.receiver_address;
-    if (rec?.receiver_name) return;
-    if (o.buyer?.first_name) return;
     if (!o.shipping?.id) return;
     try {
       const token = await _meliGetToken(o._account);
       if (!token) return;
-      const shipment = await _meliGet(`/shipments/${o.shipping.id}`, token);
-      if (shipment.receiver_address?.receiver_name) {
-        if (!o.shipping.receiver_address) o.shipping.receiver_address = {};
-        o.shipping.receiver_address.receiver_name = shipment.receiver_address.receiver_name;
-      }
+      const s = await _meliGet(`/shipments/${o.shipping.id}`, token);
+      if (!o.shipping.receiver_address) o.shipping.receiver_address = {};
+      if (s.receiver_address?.receiver_name)
+        o.shipping.receiver_address.receiver_name = s.receiver_address.receiver_name;
+      if (s.logistic_type) o.shipping.logistic_type = s.logistic_type;
+      if (s.mode)          o.shipping.mode          = s.mode;
+      if (s.tags)          o.shipping.tags          = s.tags;
     } catch(e) { console.warn(`[MELI] shipment ${o.shipping?.id}:`, e.message); }
   }));
 }
