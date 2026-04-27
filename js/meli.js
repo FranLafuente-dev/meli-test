@@ -343,9 +343,7 @@ async function _enrichFromShipment(orders) {
       const token = await _meliGetToken(o._account);
       if (!token) return;
       const s = await _meliGet(`/shipments/${o.shipping.id}`, token);
-      if (!o.shipping.receiver_address) o.shipping.receiver_address = {};
-      if (s.receiver_address?.receiver_name)
-        o.shipping.receiver_address.receiver_name = s.receiver_address.receiver_name;
+      if (s.receiver_address) o.shipping.receiver_address = s.receiver_address;
       if (s.logistic_type) o.shipping.logistic_type = s.logistic_type;
       if (s.mode)          o.shipping.mode          = s.mode;
       if (s.tags)          o.shipping.tags          = s.tags;
