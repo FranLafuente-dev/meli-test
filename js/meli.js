@@ -588,15 +588,23 @@ function _fillFormFromSuggestion(sug) {
   }
   if (sug.localidad) {
     const norm = normalizeStr(sug.localidad.toLowerCase());
-    const zone = zones.find(z =>
+    const zone = (typeof zones !== 'undefined' ? zones : []).find(z =>
       normalizeStr(z.localidad.toLowerCase()).includes(norm) ||
       norm.includes(normalizeStr(z.localidad.toLowerCase()))
     );
-    if (zone) { formEnvio = { localidad: zone.localidad, zona: zone.zona, importe: zone.importe }; showZoneSelected(); }
-    else V('f-localidad').value = sug.localidad;
-    updateNeto();
+    if (zone) {
+      setEnvio('FLEX');
+      formEnvio = { localidad: zone.localidad, zona: zone.zona, importe: zone.importe };
+      showZoneSelected();
+      updateNeto();
+      V('f-provincia').value = zone.zona.includes('CABA')
+        ? 'Ciudad Autónoma de Buenos Aires'
+        : 'Buenos Aires';
+    } else {
+      setEnvio('PE');
+      if (sug.provincia) V('f-provincia').value = sug.provincia;
+    }
   }
-  if (sug.account === 'enano' && sug.provincia) V('f-provincia').value = sug.provincia;
   const validItems = sug.items.filter(i => i.talle);
   if (validItems.length) { formItems = validItems; renderFormItems(); }
   haptic([10, 30, 10]);
