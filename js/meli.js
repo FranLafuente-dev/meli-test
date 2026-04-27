@@ -370,14 +370,19 @@ function _isMeliDispatched(order) {
 
 // ─── CONSTRUIR SUGERENCIA ─────────────────────────────────────────────────────
 function _buildSuggestion(order) {
-  const tipoEnvio = _detectShipping(order);
+  const localidad = _getLocality(order);
+  const norm = localidad ? normalizeStr(localidad.toLowerCase()) : '';
+  const zone = norm && (typeof zones !== 'undefined' ? zones : []).find(z =>
+    normalizeStr(z.localidad.toLowerCase()).includes(norm) ||
+    norm.includes(normalizeStr(z.localidad.toLowerCase()))
+  );
   return {
     meliOrderId: String(order.id),
     account:     order._account,
     nombre:      _getBuyerName(order),
     nickname:    order.buyer?.nickname || '',
-    tipoEnvio,
-    localidad:   _getLocality(order),
+    tipoEnvio:   zone ? 'FLEX' : 'PE',
+    localidad,
     provincia:   _getProvince(order),
     importe:     _getAmount(order),
     items:       _parseItems(order.order_items),
