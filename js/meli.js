@@ -362,7 +362,7 @@ async function _enrichFromShipment(orders) {
 
 // ─── FILTROS ──────────────────────────────────────────────────────────────────
 function _isMeliOrderLoaded(meliId) {
-  return orders.some(o => String(o.meliOrderId) === meliId);
+  return orders.some(o => o.meliOrderId && String(o.meliOrderId) === String(meliId));
 }
 function _isMeliDispatched(order) {
   return ['shipped', 'delivered', 'not_delivered', 'cancelled'].includes(order.shipping?.status);
@@ -375,6 +375,7 @@ function _buildSuggestion(order) {
     meliOrderId: String(order.id),
     account:     order._account,
     nombre:      _getBuyerName(order),
+    nickname:    order.buyer?.nickname || '',
     tipoEnvio,
     localidad:   _getLocality(order),
     provincia:   _getProvince(order),
@@ -572,8 +573,19 @@ function _fillFormFromSuggestion(sug) {
   setCuenta(sug.account || 'capi');
   V('f-nombre').value = sug.nombre || '';
   const tag = document.getElementById('meli-order-tag');
-  const num = document.getElementById('meli-order-num');
-  if (tag && num) { num.textContent = '#' + sug.meliOrderId; tag.classList.remove('hidden'); }
+  if (tag) {
+    document.getElementById('meli-order-num').textContent = '#' + sug.meliOrderId;
+    const userEl = document.getElementById('meli-order-user');
+    const sepEl  = document.getElementById('meli-order-sep');
+    if (sug.nickname) {
+      userEl.textContent = '@' + sug.nickname;
+      if (sepEl) sepEl.style.display = '';
+    } else {
+      userEl.textContent = '';
+      if (sepEl) sepEl.style.display = 'none';
+    }
+    tag.classList.remove('hidden');
+  }
   if (sug.localidad) {
     const norm = normalizeStr(sug.localidad.toLowerCase());
     const zone = zones.find(z =>

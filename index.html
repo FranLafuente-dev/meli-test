@@ -67,7 +67,7 @@
     </button>
     <button class="avatar-popup-btn" id="popup-meli">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="10"/><path d="M8 12l2.5 2.5L16 9"/>
+        <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6L18 2H6z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 01-8 0"/>
       </svg>
       MercadoLibre
     </button>
@@ -134,8 +134,10 @@
       <div class="form-label">Nombre comprador</div>
       <input class="form-input" id="f-nombre" type="text" placeholder="Nombre del comprador" autocomplete="off">
       <div id="meli-order-tag" class="meli-order-tag hidden">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 7H4a2 2 0 00-2 2v6a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg>
-        Orden MELI <span id="meli-order-num"></span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6L18 2H6z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 01-8 0"/></svg>
+        <span id="meli-order-num"></span>
+        <span class="meli-tag-sep" id="meli-order-sep" style="display:none">·</span>
+        <span id="meli-order-user" style="color:var(--text-3);font-size:10px"></span>
       </div>
       <div id="meli-chip-wrap" class="meli-chip-wrap hidden">
         <button class="meli-chip" id="meli-chip-btn" onclick="toggleMeliPanel()">
