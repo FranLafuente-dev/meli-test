@@ -36,8 +36,39 @@ async function meliInit() {
   }));
   updateMeliSettingsUI();
   _updateMeliConnectionBanner();
+  _meliWatchTokens(); // listener en tiempo real — propaga tokens renovados a todos los dispositivos
   startMeliPolling();
   if (meliTokens.capi || meliTokens.enano) syncMeli(false);
+}
+
+// Listener en tiempo real sobre meliConfig en Firestore.
+// Cuando cualquier dispositivo renueva un token y lo guarda, todos los demás
+// reciben el nuevo token inmediatamente sin necesidad de reconectarse.
+function _meliWatchTokens() {
+  db.collection('meta').doc('meliConfig').onSnapshot(snap => {
+    if (!snap.exists) return;
+    const d = snap.data();
+    let changed = false;
+    for (const acct of ['capi', 'enano']) {
+      if (!(acct in d)) continue;
+      const fsToken    = d[acct] || null;
+      const localToken = meliTokens[acct];
+      if (fsToken?.refreshToken) {
+        // Adoptar el token de Firestore si es más nuevo (mayor expiresAt)
+        if (!localToken?.expiresAt || fsToken.expiresAt > localToken.expiresAt) {
+          meliTokens[acct] = fsToken;
+          changed = true;
+        }
+      }
+      // Si Firestore tiene null: NO sobrescribir un token local válido.
+      // Otro dispositivo puede haber tenido un error; el local puede ser el bueno.
+    }
+    if (changed) {
+      _meliSaveTokensLocal();
+      _updateMeliConnectionBanner();
+      updateMeliSettingsUI();
+    }
+  }, () => {}); // silenciar error del listener sin romper nada
 }
 
 function _meliLoadLocal() {
@@ -305,37 +336,53 @@ async function _meliGet(path, token) {
   const res = await fetch(`${MELI_WORKER_BASE}/api/meli${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
+  if (res.status === 401) { const e = new Error(`MELI 401 ${path}`); e.is401 = true; throw e; }
   if (!res.ok) throw new Error(`MELI ${res.status} ${path}`);
   return res.json();
 }
 
 // ─── FETCH ÓRDENES RECIENTES ──────────────────────────────────────────────────
 async function _fetchTodayOrders(account) {
-  const token = await _meliGetToken(account);
-  if (!token) { return []; }
+  let token = await _meliGetToken(account);
+  if (!token) return [];
   const ac = meliTokens[account];
-  if (!ac?.userId) { return []; }
+  if (!ac?.userId) return [];
 
-  // Probar dos variantes del endpoint
   const endpoints = [
     `/orders/search?seller=${ac.userId}&limit=50&sort=date_desc`,
     `/users/${ac.userId}/orders/search?limit=50&sort=date_desc`,
   ];
   let results = null;
+  let refreshedOn401 = false;
+
   for (const ep of endpoints) {
     try {
       const data = await _meliGet(ep, token);
       results = data.results || [];
       break;
-    } catch(e) { /* siguiente endpoint */ }
+    } catch(e) {
+      if (e.is401 && !refreshedOn401) {
+        // MELI rechazó el token aunque localmente parezca válido.
+        // Forzar refresh poniendo expiresAt=0 y reintentar una sola vez.
+        refreshedOn401 = true;
+        if (meliTokens[account]) meliTokens[account] = { ...meliTokens[account], expiresAt: 0 };
+        token = await _meliGetToken(account);
+        if (!token) return [];
+        try {
+          const data = await _meliGet(ep, token);
+          results = data.results || [];
+          break;
+        } catch(e2) { /* siguiente endpoint */ }
+      }
+      /* siguiente endpoint */
+    }
   }
   if (!results) return [];
 
   const cutoff = Date.now() - 72 * 3600 * 1000;
-  const filtered = results.filter(o =>
-    o.status === 'paid' && new Date(o.date_created).getTime() >= cutoff
-  );
-  return filtered.map(o => ({ ...o, _account: account }));
+  return results
+    .filter(o => o.status === 'paid' && new Date(o.date_created).getTime() >= cutoff)
+    .map(o => ({ ...o, _account: account }));
 }
 
 // ─── SYNC PRINCIPAL ───────────────────────────────────────────────────────────
