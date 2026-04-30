@@ -25,6 +25,11 @@ const _meliRefreshing = {};
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 async function meliInit() {
+  // Si la URL tiene ?code= y ?state=, estamos en el popup de redirect de MELI OAuth.
+  // No hacer nada: la ventana principal detecta el código y cierra el popup.
+  const _qs = new URLSearchParams(window.location.search);
+  if (_qs.has('code') && _qs.has('state')) return;
+
   _meliLoadLocal();
   await _meliLoadFirestore();
   // Refresh inmediato si el access_token ya expiró (antes del primer sync)
@@ -336,14 +341,13 @@ async function _meliGet(path, token) {
   const res = await fetch(`${MELI_WORKER_BASE}/api/meli${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (res.status === 401) { const e = new Error(`MELI 401 ${path}`); e.is401 = true; throw e; }
   if (!res.ok) throw new Error(`MELI ${res.status} ${path}`);
   return res.json();
 }
 
 // ─── FETCH ÓRDENES RECIENTES ──────────────────────────────────────────────────
 async function _fetchTodayOrders(account) {
-  let token = await _meliGetToken(account);
+  const token = await _meliGetToken(account);
   if (!token) return [];
   const ac = meliTokens[account];
   if (!ac?.userId) return [];
@@ -353,29 +357,13 @@ async function _fetchTodayOrders(account) {
     `/users/${ac.userId}/orders/search?limit=50&sort=date_desc`,
   ];
   let results = null;
-  let refreshedOn401 = false;
 
   for (const ep of endpoints) {
     try {
       const data = await _meliGet(ep, token);
       results = data.results || [];
       break;
-    } catch(e) {
-      if (e.is401 && !refreshedOn401) {
-        // MELI rechazó el token aunque localmente parezca válido.
-        // Forzar refresh poniendo expiresAt=0 y reintentar una sola vez.
-        refreshedOn401 = true;
-        if (meliTokens[account]) meliTokens[account] = { ...meliTokens[account], expiresAt: 0 };
-        token = await _meliGetToken(account);
-        if (!token) return [];
-        try {
-          const data = await _meliGet(ep, token);
-          results = data.results || [];
-          break;
-        } catch(e2) { /* siguiente endpoint */ }
-      }
-      /* siguiente endpoint */
-    }
+    } catch(e) { /* siguiente endpoint */ }
   }
   if (!results) return [];
 
