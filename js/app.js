@@ -39,6 +39,7 @@ const STOCK_DEFAULTS = {
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let orders = [], stock = {}, zones = [...FLEX_ZONES], flexPeriods = [], flexManualRecords = [];
 let curView = 'pedidos', pedidosTab = 'preparar', corteCuenta = 'capi', flexFilter = null;
+let pedidosSearch = '';
 let _prodSortTs = 0;
 let expandFlexPeriods = new Set();
 let editingId = null, curCuenta = 'capi', curEnvio = 'FLEX';
@@ -356,6 +357,8 @@ function initUI() {
   setupEditFlexSheet();
   setupPedidosTabSwipe();
   setupCorteTabSwipe();
+  setupCardSwipe();
+  setupPedidosSearch();
   requestNotificationPermission();
   navigateTo('pedidos');
   setTimeout(checkAutoArchiveEnano, 1000);
@@ -410,6 +413,7 @@ function navInternal(name) {
   if ($stockFab) $stockFab.classList.toggle('visible', name === 'stock');
   document.getElementById('pedidos-tabbar')?.classList.toggle('show', name === 'pedidos');
   document.getElementById('corte-tabbar')?.classList.toggle('show', name === 'corte');
+  document.getElementById('pedidos-search-bar')?.classList.toggle('hidden', name !== 'pedidos');
 }
 function navigateTo(name) { navInternal(name); history.pushState({ view:name }, ''); }
 
@@ -805,10 +809,28 @@ function renderPedidos(animDir='') {
     }
   }
 
+  // Filtrar por búsqueda
+  const displayed = pedidosSearch
+    ? sorted.filter(o => normalizeStr(o.nombreComprador).includes(normalizeStr(pedidosSearch)))
+    : sorted;
+
+  // Actualizar empty state si el filtro dejó la lista vacía
+  if (!displayed.length && sorted.length) {
+    main.querySelector('.ped-body')?.remove();
+    if (!main.querySelector('.search-empty')) {
+      const se = document.createElement('div');
+      se.className = 'empty-state search-empty';
+      se.innerHTML = `<span>🔍</span><p>Sin resultados para "${pedidosSearch}"</p>`;
+      main.appendChild(se);
+    }
+  } else {
+    main.querySelector('.search-empty')?.remove();
+  }
+
   // Patch de cards: actualiza solo lo que cambió, sin re-animar las existentes
-  if (sorted.length) {
+  if (displayed.length) {
     const pedBody = main.querySelector('.ped-body');
-    if (pedBody) _patchCardList(pedBody, sorted.map(o => ({id:o.id, html:orderCard(o)})));
+    if (pedBody) _patchCardList(pedBody, displayed.map(o => ({id:o.id, html:orderCard(o)})));
   }
 
   updateAppBadge();
@@ -817,6 +839,14 @@ window.setTab = t => {
   const tabs=['preparar','despacho','entregados'];
   const dir = tabs.indexOf(t) > tabs.indexOf(pedidosTab) ? 'slide-in-right' : 'slide-in-left';
   pedidosTab=t;
+  // Limpiar búsqueda al cambiar de tab
+  if (pedidosSearch) {
+    pedidosSearch = '';
+    const inp = document.getElementById('pedidos-search');
+    const wrap = document.getElementById('pedidos-search-wrap');
+    if (inp) inp.value = '';
+    if (wrap) wrap.classList.remove('has-value');
+  }
   renderPedidos(dir);
 };
 
@@ -898,11 +928,13 @@ function orderCard(o) {
   // Acciones — eliminar disponible en todos los estados
   let act='';
   if (o.status==='preparar') {
-    act=`<div class="card-act">
+    act=`<div class="card-act card-act-preparar">
       <button class="btn btn-green btn-sm" onclick="acPreparado('${o.id}',this)">✓ Preparado</button>
-      <button class="btn ${o.etiqueta?'btn-tag-ok':'btn-ghost'} btn-sm" onclick="acEtiqueta('${o.id}')">${o.etiqueta?'✓ Etiqueta':'🏷 Etiqueta'}</button>
-      <button class="btn btn-ghost btn-sm" onclick="acEditar('${o.id}')">✏️</button>
-      <button class="btn btn-danger btn-sm" onclick="acEliminar('${o.id}')">🗑</button>
+      <div class="card-act-sub">
+        <button class="btn ${o.etiqueta?'btn-tag-ok':'btn-ghost'} btn-sm" onclick="acEtiqueta('${o.id}')">${o.etiqueta?'✓ Etiqueta':'🏷 Etiqueta'}</button>
+        <button class="btn btn-ghost btn-sm" onclick="acEditar('${o.id}')">✏️</button>
+        <button class="btn btn-danger btn-sm" onclick="acEliminar('${o.id}')">🗑</button>
+      </div>
     </div>`;
   } else if (o.status==='pendiente') {
     act=`<div class="card-act">
@@ -1258,11 +1290,13 @@ function openNuevaSheet(data=null) {
   if (typeof meliResetSelected === 'function') meliResetSelected();
   if (typeof renderMeliSuggestions === 'function') renderMeliSuggestions();
   openSheet($shNueva);
-  // Scroll al inicio de forma suave
   requestAnimationFrame(() => {
     const body = $shNueva.querySelector('.sheet-body');
     if (body) body.scrollTop = 0;
   });
+  if (!editingId) {
+    setTimeout(() => V('f-nombre')?.focus(), 380);
+  }
 }
 
 function setCuenta(c) {
@@ -1420,13 +1454,19 @@ window.selProd = (p, skipAuto = false) => {
   curProducto = p;
   document.querySelectorAll('#producto-btns .producto-btn').forEach(b => b.classList.toggle('active', b.textContent.trim() === p));
   const talles = getProductTalles(p);
+  const isFixed = !!PRODUCTOS_FIJO[p];
   V('talle-btns').innerHTML = talles.map(t => {
     const js = typeof t === 'string' ? `'${t}'` : t;
     const qty = formItems.filter(i => i.producto === p && String(i.talle) === String(t)).length;
     const badge = qty > 0 ? `<span class="tq">${qty}</span>` : '';
-    const unico = PRODUCTOS_FIJO[p] && talles.length === 1;
+    const unico = isFixed && talles.length === 1;
     const inCart = qty > 0 ? ' in-cart' : '';
-    return `<button class="talle-btn${unico ? ' talle-unico' : ''}${inCart}" onclick="selTalle(${js})">${displayTalle(t)}${badge}</button>`;
+    let stockCls = '';
+    if (!isFixed) {
+      const sv = stock[`${p}_${t}`] ?? 0;
+      stockCls = sv <= 0 ? ' stock-zero' : sv <= 2 ? ' stock-low' : '';
+    }
+    return `<button class="talle-btn${unico ? ' talle-unico' : ''}${inCart}${stockCls}" onclick="selTalle(${js})">${displayTalle(t)}${badge}</button>`;
   }).join('');
   V('talle-wrap').style.display = 'flex';
   if (!skipAuto && talles.length === 1) selTalle(talles[0]);
@@ -1502,8 +1542,8 @@ window.removeGroup = kEnc => {
 // ─── GUARDAR VENTA ────────────────────────────────────────────────────────────
 async function guardarVenta() {
   const nombre=titleCase(V('f-nombre').value.trim());
-  if (!nombre)           { toast('Ingresá el nombre'); return; }
-  if (!formItems.length) { toast('Agregá al menos un ítem'); return; }
+  if (!nombre)           { toast('Ingresá el nombre'); _flashInvalid(V('f-nombre')); return; }
+  if (!formItems.length) { toast('Agregá al menos un producto'); _flashInvalid(V('producto-btns')?.querySelector('.producto-btn')); return; }
 
   // Detección de duplicados solo en nuevos pedidos
   if (!editingId) {
@@ -1528,17 +1568,33 @@ async function guardarVenta() {
     base.iibb=parseNum(V('f-iibb').value)||0;
   }
   if (curEnvio==='FLEX') {
-    if (!formEnvio) { toast('Seleccioná la localidad'); return; }
-    const v=parseNum(V('f-importe-flex').value); if (!v) { toast('Ingresá el importe'); return; }
+    if (!formEnvio) { toast('Seleccioná la localidad'); _flashInvalid(V('f-localidad')); return; }
+    const v=parseNum(V('f-importe-flex').value); if (!v) { toast('Ingresá el importe'); _flashInvalid(V('f-importe-flex')); return; }
     base.importeVenta=v; base.flexLocalidad=formEnvio.localidad; base.flexZona=formEnvio.zona;
     base.flexImporte=formEnvio.importe; base.importeNeto=v-formEnvio.importe; base.importeAcreditado=base.importeNeto;
   } else {
-    const m=parseNum(V('f-importe-pe').value); if (!m) { toast('Ingresá el importe'); return; }
+    const m=parseNum(V('f-importe-pe').value); if (!m) { toast('Ingresá el importe'); _flashInvalid(V('f-importe-pe')); return; }
     base.importeAcreditado=m;
   }
   if (!editingId) {
     const hoy=new Date(), man=new Date(hoy); man.setDate(hoy.getDate()+1);
     base.fechaEstimada=curEnvio==='FLEX'?hoy.toLocaleDateString('es-AR'):man.toLocaleDateString('es-AR');
+  }
+
+  // Aviso de stock insuficiente (solo pedidos nuevos, no ediciones)
+  if (!editingId) {
+    const ns = {...stock};
+    const negKeys = new Set();
+    base.items.forEach(i => {
+      if (PRODUCTOS_FIJO[i.producto]) return;
+      const k = `${i.producto}_${i.talle}`;
+      ns[k] = (ns[k] ?? 0) - 1;
+      if (ns[k] < 0) negKeys.add(`${i.producto} ${displayTalle(i.talle)}`);
+    });
+    if (negKeys.size && !await showConfirm(
+      `Stock insuficiente: ${[...negKeys].join(', ')}`,
+      { icon:'⚠️', confirmText:'Guardar igual', confirmClass:'btn-primary', cancelText:'Cancelar' }
+    )) return;
   }
 
   haptic([15, 50, 30]);
@@ -2195,13 +2251,17 @@ function setupEditFlexSheet() {
 // ─── SWIPE ENTRE TABS DE PEDIDOS ─────────────────────────────────────────────
 function setupPedidosTabSwipe() {
   const view = VIEWS.pedidos; if (!view) return;
-  let x0=0, y0=0;
-  view.addEventListener('touchstart',e=>{x0=e.touches[0].clientX;y0=e.touches[0].clientY;},{passive:true});
+  let x0=0, y0=0, onCard=false;
+  view.addEventListener('touchstart',e=>{
+    x0=e.touches[0].clientX; y0=e.touches[0].clientY;
+    onCard = !!e.target.closest('.order-card');
+  },{passive:true});
   view.addEventListener('touchend',e=>{
+    if (onCard) return; // card swipe toma prioridad
     const dx=e.changedTouches[0].clientX-x0, dy=e.changedTouches[0].clientY-y0;
     const adx=Math.abs(dx);
     if (adx<80||Math.abs(dy)>adx*0.55) return;
-    if (adx>=200) return; // gestos grandes pasan al swipe de sección
+    if (adx>=200) return;
     e.stopPropagation();
     const tabs=['preparar','despacho','entregados'], i=tabs.indexOf(pedidosTab);
     if (dx<0&&i<tabs.length-1) setTab(tabs[i+1]);
@@ -2226,6 +2286,81 @@ function setupCorteTabSwipe() {
     if (dx<0&&i<tabs.length-1) setCorte(tabs[i+1], dir);
     if (dx>0&&i>0) setCorte(tabs[i-1], dir);
   },{passive:true});
+}
+
+// ─── SWIPE EN CARDS (dcha = avanzar estado · izq = eliminar) ─────────────────
+function setupCardSwipe() {
+  const view = VIEWS.pedidos; if (!view) return;
+  let startX, startY, card = null, swiping = false;
+
+  view.addEventListener('touchstart', e => {
+    const c = e.target.closest('.order-card[data-oid]');
+    if (!c || e.target.closest('button')) { card = null; return; }
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    card = c; swiping = false;
+  }, {passive: true});
+
+  view.addEventListener('touchmove', e => {
+    if (!card) return;
+    const dx = e.touches[0].clientX - startX;
+    const dy = e.touches[0].clientY - startY;
+    if (!swiping) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (Math.abs(dy) > Math.abs(dx) * 0.75) { card = null; return; }
+      swiping = true;
+    }
+    const clamped = Math.max(-130, Math.min(130, dx));
+    card.style.transform = `translateX(${clamped}px)`;
+    card.style.transition = 'none';
+    if (dx > 25)      { card.classList.add('swipe-right'); card.classList.remove('swipe-left'); }
+    else if (dx < -25){ card.classList.add('swipe-left');  card.classList.remove('swipe-right'); }
+    else              { card.classList.remove('swipe-right', 'swipe-left'); }
+  }, {passive: true});
+
+  view.addEventListener('touchend', e => {
+    if (!card || !swiping) { card = null; return; }
+    const dx = e.changedTouches[0].clientX - startX;
+    const c = card; card = null;
+    c.style.transition = 'transform 0.22s ease';
+    c.style.transform = '';
+    c.classList.remove('swipe-right', 'swipe-left');
+    if (Math.abs(dx) < 80) return;
+    const oid = c.dataset.oid;
+    const order = orders.find(o => o.id === oid);
+    if (!order) return;
+    setTimeout(() => {
+      if (dx > 80) {
+        haptic([20, 50, 20]);
+        if (order.status === 'preparar')  acPreparado(oid, null);
+        else if (order.status === 'pendiente') acDespachado(oid, null);
+        else if (order.status === 'camino')    acEntregado(oid, null);
+      } else {
+        haptic([30]);
+        acEliminar(oid);
+      }
+    }, 230);
+  }, {passive: true});
+}
+
+// ─── BÚSQUEDA DE PEDIDOS ──────────────────────────────────────────────────────
+function setupPedidosSearch() {
+  const inp  = document.getElementById('pedidos-search');
+  const wrap = document.getElementById('pedidos-search-wrap');
+  const clr  = document.getElementById('pedidos-search-clear');
+  if (!inp) return;
+
+  inp.addEventListener('input', () => {
+    pedidosSearch = inp.value.trim().toLowerCase();
+    wrap.classList.toggle('has-value', pedidosSearch.length > 0);
+    renderPedidos();
+  });
+  clr?.addEventListener('click', () => {
+    inp.value = ''; pedidosSearch = '';
+    wrap.classList.remove('has-value');
+    renderPedidos();
+    inp.focus();
+  });
 }
 
 // ─── STOCK VIEW ───────────────────────────────────────────────────────────────
@@ -2452,6 +2587,16 @@ function normalizeStr(s){ return s.toLowerCase().normalize('NFD').replace(/[̀-�
 
 function haptic(pattern) {
   try { if (navigator.vibrate) navigator.vibrate(pattern); } catch(e) {}
+}
+
+function _flashInvalid(el) {
+  if (!el) return;
+  el.classList.remove('input-error');
+  void el.offsetWidth; // restart animation
+  el.classList.add('input-error');
+  el.focus();
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(() => el.classList.remove('input-error'), 1400);
 }
 
 function updateAppBadge() {
