@@ -20,6 +20,8 @@ let meliSuggestions = [];
 let meliPollTimer   = null;
 let meliSelectedSug = null;
 let meliAuthPopup   = null;
+// Dedup: evita que dos pestañas/llamadas simultáneas renueven el mismo token
+const _meliRefreshing = {};
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 async function meliInit() {
@@ -33,6 +35,7 @@ async function meliInit() {
     }
   }));
   updateMeliSettingsUI();
+  _updateMeliConnectionBanner();
   startMeliPolling();
   if (meliTokens.capi || meliTokens.enano) syncMeli(false);
 }
@@ -57,9 +60,22 @@ async function _meliLoadFirestore() {
       const d = s.data();
       if (d.appId)  { meliAppId  = d.appId;  localStorage.setItem(LS_MELI_APPID,  d.appId);  }
       if (d.secret) { meliSecret = d.secret; localStorage.setItem(LS_MELI_SECRET, d.secret); }
-      // Cargar siempre (incluso null) para que Firebase sea la fuente de verdad
-      if ('capi'  in d) meliTokens.capi  = d.capi  || null;
-      if ('enano' in d) meliTokens.enano = d.enano || null;
+      for (const acct of ['capi', 'enano']) {
+        if (!(acct in d)) continue;
+        const fsToken    = d[acct] || null;
+        const localToken = meliTokens[acct];
+        if (fsToken?.refreshToken) {
+          // Firestore tiene token: adoptar el que tenga mayor expiresAt (el más reciente)
+          if (!localToken?.expiresAt || fsToken.expiresAt >= localToken.expiresAt) {
+            meliTokens[acct] = fsToken;
+          }
+        } else if (!localToken?.refreshToken) {
+          // Ninguno tiene refreshToken válido
+          meliTokens[acct] = null;
+        }
+        // Si Firestore es null pero local tiene refreshToken: conservar local.
+        // Protege el caso donde la race condition ya borró Firestore pero el token sigue vivo.
+      }
       _meliSaveTokensLocal();
     }
   } catch(e) {}
@@ -211,36 +227,58 @@ async function _meliExchangeCode(account, code, verifier, redirectUri) {
 }
 
 async function _meliRefreshToken(account) {
-  const ac = meliTokens[account];
-  if (!ac?.refreshToken) return false;
-  try {
-    const params = {
-      grant_type:    'refresh_token',
-      client_id:     meliAppId,
-      refresh_token: ac.refreshToken,
-    };
-    if (meliSecret) params.client_secret = meliSecret;
-    const res = await fetch(`${MELI_WORKER_BASE}/api/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-      body: new URLSearchParams(params),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.access_token) {
-      // 'invalid_grant' = refresh_token muerto. Otros errores son transitorios.
-      if (data.error === 'invalid_grant' || (data.message || '').toLowerCase().includes('invalid')) return 'invalid';
-      return false;
-    }
-    meliTokens[account] = {
-      ...ac,
-      token:        data.access_token,
-      refreshToken: data.refresh_token || ac.refreshToken,
-      expiresAt:    Date.now() + (data.expires_in * 1000) - 120000,
-    };
-    _meliSaveToken(account);
-    updateMeliSettingsUI();
-    return true;
-  } catch(e) { return false; } // error de red → no borrar tokens
+  // Dedup: si ya hay un refresh en curso para esta cuenta, esperar ese resultado
+  if (_meliRefreshing[account]) return _meliRefreshing[account];
+  const p = (async () => {
+    const ac = meliTokens[account];
+    if (!ac?.refreshToken) return false;
+    try {
+      const params = {
+        grant_type:    'refresh_token',
+        client_id:     meliAppId,
+        refresh_token: ac.refreshToken,
+      };
+      if (meliSecret) params.client_secret = meliSecret;
+      const res = await fetch(`${MELI_WORKER_BASE}/api/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+        body: new URLSearchParams(params),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.access_token) {
+        if (data.error === 'invalid_grant' || (data.message || '').toLowerCase().includes('invalid')) {
+          // Antes de declarar el token muerto: re-leer Firestore.
+          // Otra pestaña/dispositivo puede haber renovado ya, invalidando nuestro refreshToken.
+          try {
+            const snap = await db.collection('meta').doc('meliConfig').get();
+            if (snap.exists) {
+              const fsToken = snap.data()[account];
+              if (fsToken?.refreshToken && (fsToken.expiresAt || 0) > Date.now()) {
+                // Otra instancia ya renovó — adoptar ese token
+                meliTokens[account] = fsToken;
+                _meliSaveTokensLocal();
+                updateMeliSettingsUI();
+                return true;
+              }
+            }
+          } catch(e) {}
+          return 'invalid';
+        }
+        return false; // error HTTP transitorio — no borrar tokens
+      }
+      meliTokens[account] = {
+        ...ac,
+        token:        data.access_token,
+        refreshToken: data.refresh_token || ac.refreshToken,
+        expiresAt:    Date.now() + (data.expires_in * 1000) - 120000,
+      };
+      _meliSaveToken(account);
+      updateMeliSettingsUI();
+      return true;
+    } catch(e) { return false; } // error de red → no borrar tokens
+  })();
+  _meliRefreshing[account] = p;
+  try { return await p; } finally { _meliRefreshing[account] = null; }
 }
 
 // Obtener token válido (renueva automáticamente con refresh_token)
@@ -254,8 +292,9 @@ async function _meliGetToken(account) {
     // Refresh token definitivamente muerto — requiere reconexión manual
     meliTokens[account] = null;
     _meliSaveToken(account);
+    _updateMeliConnectionBanner();
     updateMeliSettingsUI();
-    toast(`Sesión MELI ${account.toUpperCase()} expirada — reconectá`);
+    toast(`⚠️ MELI ${account.toUpperCase()} desconectada — abrí Ajustes MELI`);
   }
   // false = error transitorio → no borrar tokens, reintentará en próximo ciclo
   return null;
@@ -302,7 +341,8 @@ async function _fetchTodayOrders(account) {
 // ─── SYNC PRINCIPAL ───────────────────────────────────────────────────────────
 async function syncMeli(showToast = true) {
   if (!meliTokens.capi && !meliTokens.enano) {
-    if (showToast) toast('MELI no conectado — configurá en ajustes');
+    if (showToast) toast('⚠️ MELI no conectado — abrí Ajustes MELI');
+    _updateMeliConnectionBanner();
     return;
   }
   const syncBtn = document.getElementById('btn-sync');
@@ -334,15 +374,26 @@ async function syncMeli(showToast = true) {
     await _updateTracking(all);
 
     if (showToast) {
-      toast(suggestions.length > 0
-        ? `${suggestions.length} pedido${suggestions.length > 1 ? 's' : ''} nuevo${suggestions.length > 1 ? 's' : ''} en MELI ✓`
-        : 'MELI sincronizado ✓'
-      );
+      // Verificar estado de cuentas luego del fetch (puede haber cambiado durante el sync)
+      const disc = ['capi', 'enano'].filter(a => !meliTokens[a]);
+      if (disc.length) {
+        const names   = disc.map(a => a.toUpperCase()).join(' y ');
+        const pedPart = suggestions.length > 0
+          ? ` — ${suggestions.length} pedido${suggestions.length > 1 ? 's' : ''} nuevo${suggestions.length > 1 ? 's' : ''}`
+          : '';
+        toast(`⚠️ ${names} desconectada${disc.length > 1 ? 's' : ''}${pedPart}`);
+      } else {
+        toast(suggestions.length > 0
+          ? `${suggestions.length} pedido${suggestions.length > 1 ? 's' : ''} nuevo${suggestions.length > 1 ? 's' : ''} en MELI ✓`
+          : 'MELI sincronizado ✓'
+        );
+      }
     }
   } catch(e) {
     if (showToast) toast('Error al sincronizar con MELI');
   } finally {
     if (syncBtn) syncBtn.classList.remove('syncing');
+    _updateMeliConnectionBanner();
   }
 }
 window.syncMeli = syncMeli;
@@ -740,6 +791,24 @@ function updateMeliSettingsUI() {
   if (inpSec && meliSecret && !inpSec.value) inpSec.value = meliSecret;
   const uriEl = document.getElementById('meli-redirect-uri');
   if (uriEl && !uriEl.textContent) uriEl.textContent = window.location.origin + window.location.pathname;
+  _updateMeliConnectionBanner();
+}
+
+// Banner persistente que aparece en la app cuando hay cuentas desconectadas
+function _updateMeliConnectionBanner() {
+  const banner = document.getElementById('meli-conn-banner');
+  if (!banner) return;
+  const disc = ['capi', 'enano'].filter(a => !meliTokens[a]);
+  if (disc.length === 0) {
+    banner.className = 'alert-banner';
+    banner.textContent = '';
+    return;
+  }
+  const names = disc.map(a => a.toUpperCase()).join(' y ');
+  const plural = disc.length > 1;
+  banner.className = 'alert-banner show warning';
+  banner.innerHTML = `⚠️ MELI ${names} desconectada${plural ? 's' : ''} — `
+    + `<span style="text-decoration:underline;cursor:pointer" onclick="document.getElementById('popup-meli')?.click()">abrí Ajustes MELI</span> para reconectar`;
 }
 function _setStatusEl(elId, ac, label) {
   const el = document.getElementById(elId);
