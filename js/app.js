@@ -108,6 +108,7 @@ function entrarApp(user) {
   initUI();
   updateTopbarDate();
   setInterval(updateTopbarDate, 60000);
+
   connectFirestore();
   if (typeof meliInit === 'function') meliInit();
 }
@@ -131,9 +132,12 @@ function connectFirestore() {
   if (fsConectado) return;
   fsConectado = true;
 
+  let _snapTimer = null;
   db.collection('orders').orderBy('createdAt','desc').onSnapshot(snap => {
     orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    saveOrders(); renderPedidos(); renderCorte(); checkAutoArchiveEnano();
+    saveOrders();
+    clearTimeout(_snapTimer);
+    _snapTimer = setTimeout(() => { renderPedidos(); renderCorte(); checkAutoArchiveEnano(); }, 200);
   }, e => console.warn('orders:', e));
 
   db.collection('meta').doc('stock').onSnapshot(snap => {
@@ -648,7 +652,7 @@ function setupAlerts() {
     const d=new Date(now); d.setHours(h,m,0,0);
     const diff=d-now; if (diff>0) alertTimers.push(setTimeout(()=>showAlert(t,msg,tipo),diff));
   });
-  setInterval(updateCountdowns, 30000);
+  setInterval(updateCountdowns, 60000);
 }
 function showAlert(type, msg, tipo) {
   // Solo alertar si hay pedidos pendientes del tipo correspondiente
@@ -676,16 +680,40 @@ function updateCountdowns() {
 // ─── PEDIDOS VIEW ─────────────────────────────────────────────────────────────
 const SPRI = {preparar:0,pendiente:1,camino:2,entregado:3};
 
+// Actualiza cards existentes sin destruir el DOM — solo toca lo que cambió
+function _patchCardList(pedBody, cards) {
+  const tpl = document.createElement('template');
+  const existing = new Map();
+  pedBody.querySelectorAll('.order-card[data-oid]').forEach(el => existing.set(el.dataset.oid, el));
+  cards.forEach((card, i) => {
+    tpl.innerHTML = card.html;
+    const newEl = tpl.content.firstElementChild;
+    let el = existing.get(card.id);
+    if (el) {
+      if (el.innerHTML !== newEl.innerHTML) el.innerHTML = newEl.innerHTML;
+      existing.delete(card.id);
+    } else {
+      el = newEl; // nueva card → entra con animación CSS
+    }
+    const atPos = pedBody.children[i];
+    if (el !== atPos) pedBody.insertBefore(el, atPos || null);
+  });
+  existing.forEach(el => el.remove()); // sacar cards eliminadas
+}
+
 function renderPedidos(animDir='') {
   const v = VIEWS.pedidos; if (!v) return;
 
-  const preparar  = orders.filter(o=>o.status==='preparar');
-  const pendiente = orders.filter(o=>o.status==='pendiente');
-  const camino    = orders.filter(o=>o.status==='camino');
-  const entregados= orders.filter(o=>o.status==='entregado' && Date.now()-ms(o.deliveredAt)<H24);
-
+  // Partición en un solo loop
+  const preparar=[], pendiente=[], camino=[], entregados=[];
+  let nFlexP=0, nPEP=0;
+  for (const o of orders) {
+    if      (o.status==='preparar')  { preparar.push(o); }
+    else if (o.status==='pendiente') { pendiente.push(o); if(o.tipoEnvio==='FLEX') nFlexP++; else nPEP++; }
+    else if (o.status==='camino')    { camino.push(o); }
+    else if (o.status==='entregado'&&Date.now()-ms(o.deliveredAt)<H24) { entregados.push(o); }
+  }
   const nPrep=preparar.length, nDesp=pendiente.length+camino.length, nEntr=entregados.length;
-  const nFlex=pendiente.filter(o=>o.tipoEnvio==='FLEX').length;
 
   const mkDispBtn = (tipo, icon, n) => {
     const diff = dispTarget(tipo) - new Date();
@@ -696,76 +724,78 @@ function renderPedidos(animDir='') {
       ${icon} Despachar ${tipo} (${n}) <span class="countdown${urg?' '+urg:''}" data-cd="${tipo}">${fmtDiff(diff)}</span>
     </button>`;
   };
-  const nPE  =pendiente.filter(o=>o.tipoEnvio==='PE').length;
 
-  let body='';
+  // Tabs — actualizar solo si cambiaron los números
+  const pedTabbar = document.getElementById('pedidos-tabbar');
+  if (pedTabbar) {
+    const th = `<div class="pedidos-tabs"><button class="pedidos-tab${pedidosTab==='preparar'?' active':''}" onclick="setTab('preparar')">Preparar${nPrep?`<span class="tab-badge">${nPrep}</span>`:''}</button><button class="pedidos-tab${pedidosTab==='despacho'?' active':''}" onclick="setTab('despacho')">En camino${nDesp?`<span class="tab-badge">${nDesp}</span>`:''}</button><button class="pedidos-tab${pedidosTab==='entregados'?' active':''}" onclick="setTab('entregados')">Entregados${nEntr?`<span class="tab-badge">${nEntr}</span>`:''}</button></div>`;
+    if (pedTabbar.innerHTML !== th) pedTabbar.innerHTML = th;
+  }
+
+  // Computar lista de cards y HTML estático según pestaña activa
+  let sorted=[], emptyHtml='', staticHtml='';
   if (pedidosTab==='preparar') {
-    let sorted;
     if (prepSort === 'modelo') {
       const prodOrder = _prodSalesOrder();
       sorted = [...preparar].sort((a, b) => {
-        const aP = a.items?.[0]?.producto || '', bP = b.items?.[0]?.producto || '';
-        const pi = prodOrder.indexOf(aP) - prodOrder.indexOf(bP);
-        if (pi !== 0) return pi;
-        const aT = parseInt(a.items?.[0]?.talle), bT = parseInt(b.items?.[0]?.talle);
-        if (!isNaN(aT) && !isNaN(bT)) return aT - bT;
-        return 0;
+        const aP=a.items?.[0]?.producto||'', bP=b.items?.[0]?.producto||'';
+        const pi=prodOrder.indexOf(aP)-prodOrder.indexOf(bP); if(pi!==0) return pi;
+        const aT=parseInt(a.items?.[0]?.talle), bT=parseInt(b.items?.[0]?.talle);
+        return (!isNaN(aT)&&!isNaN(bT)) ? aT-bT : 0;
       });
     } else {
       sorted = [...preparar].sort((a,b)=>(a.tipoEnvio==='FLEX'?0:10)-(b.tipoEnvio==='FLEX'?0:10));
     }
-    const bar=`<div style="display:flex;flex-direction:column;gap:8px">
-      <div class="home-bar">
-        ${mkDispBtn('FLEX','🚚',nFlex)}
-        ${mkDispBtn('PE',  '📦',nPE)}
-      </div>
-      <button class="btn-dep" id="btn-dep" onclick="toggleDep()">🏪 Depósito</button>
-      <button class="prep-sort-link${prepSort==='modelo'?' active':''}" onclick="togglePrepSort()">Orden: ${prepSort==='modelo'?'Modelo/Talle ✓':'Tiempo · FLEX→PE'}</button>
-    </div>
-    <div id="dep-box" style="display:none" class="dep-box"></div>`;
-    body = bar + (sorted.length
-      ? `<div class="ped-body">${sorted.map(orderCard).join('')}</div>`
-      : `<div class="empty-state empty-preparar"><div class="empty-check-circle">✓</div><p>¡Estás al día!</p></div>`);
-
-  } else if (pedidosTab === 'despacho') {
-    const nFlexPend=pendiente.filter(o=>o.tipoEnvio==='FLEX').length;
-    const nPEPend  =pendiente.filter(o=>o.tipoEnvio==='PE').length;
-    const sorted=[...pendiente,...camino].sort((a,b)=>{
+    staticHtml = `<div style="display:flex;flex-direction:column;gap:8px"><div class="home-bar">${mkDispBtn('FLEX','🚚',nFlexP)}${mkDispBtn('PE','📦',nPEP)}</div><button class="btn-dep" id="btn-dep" onclick="toggleDep()">🏪 Depósito</button><button class="prep-sort-link${prepSort==='modelo'?' active':''}" onclick="togglePrepSort()">Orden: ${prepSort==='modelo'?'Modelo/Talle ✓':'Tiempo · FLEX→PE'}</button></div><div id="dep-box" style="display:none" class="dep-box"></div>`;
+    emptyHtml = `<div class="empty-state empty-preparar"><div class="empty-check-circle">✓</div><p>¡Estás al día!</p></div>`;
+  } else if (pedidosTab==='despacho') {
+    sorted = [...pendiente,...camino].sort((a,b)=>{
       const sp=SPRI[a.status]-SPRI[b.status]; if(sp!==0) return sp;
       if(a.status==='camino'&&b.status==='camino') return parseLocalDate(a.fechaEstimada)-parseLocalDate(b.fechaEstimada);
       return 0;
     });
-    const dispBar=`<div class="home-bar">
-      ${mkDispBtn('FLEX','🚚',nFlexPend)}
-      ${mkDispBtn('PE',  '📦',nPEPend)}
-    </div>`;
-    body = dispBar + (sorted.length
-      ? `<div class="ped-body">${sorted.map(orderCard).join('')}</div>`
-      : `<div class="empty-state"><span>📦</span><p>Sin pedidos en camino</p></div>`);
-
+    staticHtml = `<div class="home-bar">${mkDispBtn('FLEX','🚚',nFlexP)}${mkDispBtn('PE','📦',nPEP)}</div>`;
+    emptyHtml = `<div class="empty-state"><span>📦</span><p>Sin pedidos en camino</p></div>`;
   } else {
-    const sorted=[...entregados].sort((a,b)=>ms(b.deliveredAt)-ms(a.deliveredAt));
-    body = sorted.length
-      ? `<div class="ped-body">${sorted.map(orderCard).join('')}</div>`
-      : `<div class="empty-state"><span>📭</span><p>Sin entregados en las últimas 24hs</p></div>`;
+    sorted = [...entregados].sort((a,b)=>ms(b.deliveredAt)-ms(a.deliveredAt));
+    emptyHtml = `<div class="empty-state"><span>📭</span><p>Sin entregados en las últimas 24hs</p></div>`;
   }
 
-  // Tabs → fuera del scroll en #pedidos-tabbar
-  const pedTabbar = document.getElementById('pedidos-tabbar');
-  if (pedTabbar) pedTabbar.innerHTML = `
-    <div class="pedidos-tabs">
-      <button class="pedidos-tab${pedidosTab==='preparar'?' active':''}" onclick="setTab('preparar')">
-        Preparar${nPrep?`<span class="tab-badge">${nPrep}</span>`:''}
-      </button>
-      <button class="pedidos-tab${pedidosTab==='despacho'?' active':''}" onclick="setTab('despacho')">
-        En camino${nDesp?`<span class="tab-badge">${nDesp}</span>`:''}
-      </button>
-      <button class="pedidos-tab${pedidosTab==='entregados'?' active':''}" onclick="setTab('entregados')">
-        Entregados${nEntr?`<span class="tab-badge">${nEntr}</span>`:''}
-      </button>
-    </div>`;
-  v.innerHTML = `<div class="ped-main-content${animDir?' '+animDir:''}">${body}</div>`;
-  updateCountdowns();
+  // Estructura principal: reconstruir solo en cambio de pestaña o primera carga
+  let main = v.querySelector('.ped-main-content');
+  const tabChanged = !main || animDir || main.dataset.tab !== pedidosTab;
+
+  if (tabChanged) {
+    v.innerHTML = `<div class="ped-main-content${animDir?' '+animDir:''}" data-tab="${pedidosTab}">${staticHtml}${sorted.length?'<div class="ped-body"></div>':emptyHtml}</div>`;
+    main = v.querySelector('.ped-main-content');
+  } else {
+    // Misma pestaña: actualizar barra de despacho sin tocar dep-box
+    const bar = main.querySelector('.home-bar');
+    if (bar) {
+      const bh = `${mkDispBtn('FLEX','🚚',nFlexP)}${mkDispBtn('PE','📦',nPEP)}`;
+      if (bar.innerHTML !== bh) bar.innerHTML = bh;
+    }
+    const sl = main.querySelector('.prep-sort-link');
+    if (sl) {
+      sl.className = `prep-sort-link${prepSort==='modelo'?' active':''}`;
+      sl.textContent = `Orden: ${prepSort==='modelo'?'Modelo/Talle ✓':'Tiempo · FLEX→PE'}`;
+    }
+    // Transición entre lista y estado vacío
+    if (!sorted.length) {
+      main.querySelector('.ped-body')?.remove();
+      if (!main.querySelector('.empty-state,.empty-preparar')) main.insertAdjacentHTML('beforeend', emptyHtml);
+    } else {
+      main.querySelector('.empty-state,.empty-preparar')?.remove();
+      if (!main.querySelector('.ped-body')) { const pb=document.createElement('div'); pb.className='ped-body'; main.appendChild(pb); }
+    }
+  }
+
+  // Patch de cards: actualiza solo lo que cambió, sin re-animar las existentes
+  if (sorted.length) {
+    const pedBody = main.querySelector('.ped-body');
+    if (pedBody) _patchCardList(pedBody, sorted.map(o => ({id:o.id, html:orderCard(o)})));
+  }
+
   updateAppBadge();
 }
 window.setTab = t => {
@@ -878,8 +908,9 @@ function orderCard(o) {
     </div>`;
   }
 
+  const meliRef = o.meliOrderId ? `<span class="order-meli-ref">#${o.meliOrderId}</span>` : '';
   return `<div class="order-card${['preparar','pendiente'].includes(o.status)&&o.tipoEnvio==='FLEX'?' flex-active':''}" data-oid="${o.id}">
-    <div class="order-header">${cb}${eb}${sc}${cd}</div>
+    <div class="order-header">${cb}${eb}${sc}${cd}${meliRef}</div>
     <div class="order-name">${o.nombreComprador}</div>
     <div class="order-items">${fmtItemsShort(o.items)}</div>
     ${fechaLine}${iibb}${monto}${act}
@@ -1279,7 +1310,7 @@ function setupProvinciaSearch() {
     res.querySelectorAll('.prov-item').forEach((el, i) => {
       const pick = e => {
         e.preventDefault(); e.stopPropagation();
-        inp.value = hits[i]; res.classList.remove('show');
+        inp.value = hits[i]; res.classList.remove('show'); inp.blur();
       };
       el.addEventListener('mousedown', pick);
       el.addEventListener('touchstart', pick, { passive: false });
@@ -1318,7 +1349,7 @@ function setupLocalidadSearch() {
         e.preventDefault(); e.stopPropagation();
         const z=zoneHits[parseInt(el.dataset.zi)]; if (!z) return;
         formEnvio={localidad:z.localidad,zona:z.zona,importe:z.importe};
-        inp.value=''; res.classList.remove('show');
+        inp.value=''; res.classList.remove('show'); inp.blur();
         showZoneSelected(); updateNeto();
       };
       el.addEventListener('mousedown',pick);
@@ -1496,6 +1527,9 @@ async function guardarVenta() {
   }
 
   haptic([15, 50, 30]);
+
+  const btnGuardar = V('btn-guardar-venta');
+  if (btnGuardar) { btnGuardar.disabled = true; btnGuardar.textContent = 'Guardando…'; }
   closeSheet($shNueva);
 
   try {
@@ -1525,6 +1559,7 @@ async function guardarVenta() {
       toast('Venta guardada ✓');
     }
   } catch(e){ toast('Error al guardar'); console.error(e); }
+  finally { if (btnGuardar) { btnGuardar.disabled = false; btnGuardar.textContent = 'Guardar'; } }
 }
 
 // ─── CORTE VIEW ───────────────────────────────────────────────────────────────
