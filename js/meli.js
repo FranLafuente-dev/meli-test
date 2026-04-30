@@ -273,9 +273,9 @@ async function _meliGet(path, token) {
 // ─── FETCH ÓRDENES RECIENTES ──────────────────────────────────────────────────
 async function _fetchTodayOrders(account) {
   const token = await _meliGetToken(account);
-  if (!token) { console.warn(`[MELI] ${account}: sin token`); return []; }
+  if (!token) { return []; }
   const ac = meliTokens[account];
-  if (!ac?.userId) { console.warn(`[MELI] ${account}: sin userId`); return []; }
+  if (!ac?.userId) { return []; }
 
   // Probar dos variantes del endpoint
   const endpoints = [
@@ -340,7 +340,6 @@ async function syncMeli(showToast = true) {
       );
     }
   } catch(e) {
-    console.warn('MELI sync:', e);
     if (showToast) toast('Error al sincronizar con MELI');
   } finally {
     if (syncBtn) syncBtn.classList.remove('syncing');
@@ -360,7 +359,7 @@ async function _enrichFromShipment(orders) {
       if (s.logistic_type) o.shipping.logistic_type = s.logistic_type;
       if (s.mode)          o.shipping.mode          = s.mode;
       if (s.tags)          o.shipping.tags          = s.tags;
-    } catch(e) { console.warn(`[MELI] shipment ${o.shipping?.id}:`, e.message); }
+    } catch(e) { /* enrich failed — skip silently */ }
   }));
 }
 
@@ -672,7 +671,7 @@ async function meliCheckDispatch(pendOrders) {
       const st = mo.shipping?.status;
       if (!['shipped', 'delivered', 'handling', 'ready_to_ship'].includes(st))
         inconsistentes.push(order.nombreComprador);
-    } catch(e) { console.warn('MELI dispatch check:', e.message); }
+    } catch(e) { /* dispatch check failed — skip silently */ }
   }
   if (inconsistentes.length)
     toast(`⚠️ Sin despacho en MELI: ${inconsistentes.join(', ')}`, 6000);
