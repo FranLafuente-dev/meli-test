@@ -262,6 +262,7 @@ body {
   color: #fff; line-height: 1; font-family: inherit;
   transition: transform 0.2s var(--spring), box-shadow 0.2s;
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  will-change: transform; backface-visibility: hidden;
 }
 .nueva-fab.visible { display: flex; animation: fabIn 0.32s var(--spring) both; }
 @keyframes fabIn {
@@ -272,7 +273,7 @@ body {
 .fab-icon {
   display: flex; align-items: center; justify-content: center;
   width: 100%; height: 100%;
-  font-size: 44px; font-weight: 400; line-height: 1;
+  font-size: 52px; font-weight: 300; line-height: 1;
   transition: transform 0.3s var(--spring);
   user-select: none; -webkit-user-select: none;
 }
@@ -405,9 +406,10 @@ body {
 .dep-n   { flex: 1; color: var(--text-1); font-weight: 500; }
 .dep-q   { color: var(--red); font-weight: 700; min-width: 28px; text-align: right; }
 .dep-r   { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; min-width: 60px; text-align: center; }
-.dep-r.ok   { background: rgba(52,199,89,0.15);  color: var(--green); }
-.dep-r.bajo { background: rgba(255,149,0,0.15);   color: var(--orange); }
-.dep-r.cero { background: rgba(255,59,48,0.15);   color: var(--red); }
+.dep-r.ok       { background: rgba(52,199,89,0.15);  color: var(--green); }
+.dep-r.bajo     { background: rgba(255,149,0,0.15);   color: var(--orange); }
+.dep-r.cero     { background: rgba(255,59,48,0.15);   color: var(--red); }
+.dep-r.negativo { background: rgba(255,59,48,0.25);   color: var(--red); font-weight: 800; }
 
 /* ── ORDER CARD — glass ──────────────────────────────────────────────────── */
 .order-card {
@@ -417,6 +419,7 @@ body {
   box-shadow: var(--shadow);
   padding: 14px 16px; display: flex; flex-direction: column; gap: 9px;
   transition: transform 0.1s;
+  will-change: transform; backface-visibility: hidden;
 }
 .order-card:active { transform: scale(0.97); }
 .order-card.flex-active {
@@ -491,6 +494,7 @@ body {
   transform: translateY(100%);
   transition: transform 0.26s var(--ease-out);
   max-height: 92dvh; display: flex; flex-direction: column;
+  will-change: transform; backface-visibility: hidden;
 }
 .sheet.open { transform: translateY(0); box-shadow: 0 -20px 60px rgba(0,0,0,0.5), var(--shadow-lg); }
 @media (prefers-color-scheme: light) {
@@ -502,10 +506,15 @@ body {
 }
 .sheet-title   { font-size: 18px; font-weight: 800; padding: 12px 20px 0; flex-shrink: 0; }
 .sheet-body    {
-  overflow-y: auto; padding: 16px 20px 40px; flex: 1;
+  overflow-y: auto; padding: 16px 20px 20px; flex: 1;
   display: flex; flex-direction: column; gap: 16px; scrollbar-width: none;
 }
 .sheet-body::-webkit-scrollbar { display: none; }
+.sheet-footer {
+  padding: 12px 20px calc(16px + env(safe-area-inset-bottom, 0px)); flex-shrink: 0;
+  display: flex; flex-direction: column; gap: 10px;
+  border-top: 1px solid var(--border);
+}
 
 /* ── FORM ─────────────────────────────────────────────────────────────────── */
 .form-group  { display: flex; flex-direction: column; gap: 7px; }
@@ -785,9 +794,10 @@ input:-webkit-autofill:focus {
 }
 .stock-row:last-of-type { border-bottom: none; }
 .stock-talle     { font-size: 14px; font-weight: 600; min-width: 44px; color: var(--text-2); }
-.stock-row.cero .stock-talle { color: var(--red); }
-.stock-row.bajo .stock-talle { color: var(--orange); }
-.stock-row.ok   .stock-talle { color: var(--text); }
+.stock-row.negativo .stock-talle { color: var(--red); font-weight: 800; }
+.stock-row.cero     .stock-talle { color: var(--red); }
+.stock-row.bajo     .stock-talle { color: var(--orange); }
+.stock-row.ok       .stock-talle { color: var(--text); }
 .stock-stepper  { display: flex; align-items: center; gap: 14px; }
 .stepper-btn {
   width: 36px; height: 36px; border-radius: 50%; border: none;
@@ -798,8 +808,9 @@ input:-webkit-autofill:focus {
 }
 .stepper-btn:active { background: var(--accent-light); transform: scale(0.86); }
 .stepper-val { min-width: 28px; text-align: center; font-size: 18px; font-weight: 700; }
-.stock-row.cero .stepper-val { color: var(--red); }
-.stock-row.bajo .stepper-val { color: var(--orange); }
+.stock-row.negativo .stepper-val { color: var(--red); font-weight: 800; }
+.stock-row.cero     .stepper-val { color: var(--red); }
+.stock-row.bajo     .stepper-val { color: var(--orange); }
 .stepper-pencil { font-size: 13px !important; padding: 4px 7px; border-left: 1px solid var(--border) !important; border-radius: 0 50% 50% 0 !important; opacity: 0.75; }
 .stepper-pencil:active { opacity: 1; }
 
@@ -1128,11 +1139,11 @@ input:-webkit-autofill:focus {
 /* ── MELI BADGE EN FAB ───────────────────────────────────────────────────── */
 .meli-badge {
   display: none;
-  position: absolute; top: 4px; left: 55%;
-  min-width: 24px; height: 24px; padding: 0 6px;
+  position: absolute; top: 2px; left: 52%;
+  min-width: 28px; height: 28px; padding: 0 7px;
   background: var(--red); color: #fff;
-  font-size: 13px; font-weight: 700; line-height: 24px;
-  border-radius: 12px; border: 2px solid var(--bg);
+  font-size: 15px; font-weight: 800; line-height: 28px;
+  border-radius: 14px; border: 2.5px solid var(--bg);
   text-align: center; pointer-events: none;
   z-index: 2;
 }

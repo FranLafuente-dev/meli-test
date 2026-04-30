@@ -457,13 +457,26 @@ function _isMeliDispatched(order) {
 }
 
 // ─── CONSTRUIR SUGERENCIA ─────────────────────────────────────────────────────
+function _findFlexZone(localidad, provincia) {
+  const norm     = localidad ? normalizeStr(localidad.toLowerCase()) : '';
+  const provNorm = provincia ? normalizeStr(provincia.toLowerCase()) : '';
+  // Solo GBA/CABA entran en FLEX; otras provincias → PE
+  const isCaba = provNorm.includes('autonoma') || provNorm.includes('capital federal');
+  const isBsAs = !isCaba && provNorm.includes('buenos aires');
+  if (!norm || (!isCaba && !isBsAs)) return null;
+  const allZones = typeof zones !== 'undefined' ? zones : [];
+  return allZones.find(z => {
+    const zNorm = normalizeStr(z.localidad.toLowerCase());
+    if (!(zNorm === norm || zNorm.includes(norm) || norm.includes(zNorm))) return false;
+    // Evitar falsos positivos: "Chacabuco" (BsAs) no debe caer en "Parque Chacabuco" (CABA)
+    return isCaba ? z.zona.includes('CABA') : !z.zona.includes('CABA');
+  }) || null;
+}
+
 function _buildSuggestion(order) {
   const localidad = _getLocality(order);
-  const norm = localidad ? normalizeStr(localidad.toLowerCase()) : '';
-  const zone = norm && (typeof zones !== 'undefined' ? zones : []).find(z =>
-    normalizeStr(z.localidad.toLowerCase()).includes(norm) ||
-    norm.includes(normalizeStr(z.localidad.toLowerCase()))
-  );
+  const provincia = _getProvince(order);
+  const zone      = _findFlexZone(localidad, provincia);
   return {
     meliOrderId: String(order.id),
     account:     order._account,
@@ -471,7 +484,7 @@ function _buildSuggestion(order) {
     nickname:    order.buyer?.nickname || '',
     tipoEnvio:   zone ? 'FLEX' : 'PE',
     localidad,
-    provincia:   _getProvince(order),
+    provincia,
     importe:     _getAmount(order),
     items:       _parseItems(order.order_items),
     dateCreated: order.date_created,
@@ -694,11 +707,7 @@ function _fillFormFromSuggestion(sug) {
     tag.classList.remove('hidden');
   }
   if (sug.localidad) {
-    const norm = normalizeStr(sug.localidad.toLowerCase());
-    const zone = (typeof zones !== 'undefined' ? zones : []).find(z =>
-      normalizeStr(z.localidad.toLowerCase()).includes(norm) ||
-      norm.includes(normalizeStr(z.localidad.toLowerCase()))
-    );
+    const zone = _findFlexZone(sug.localidad, sug.provincia);
     if (zone) {
       setEnvio('FLEX');
       formEnvio = { localidad: zone.localidad, zona: zone.zona, importe: zone.importe };

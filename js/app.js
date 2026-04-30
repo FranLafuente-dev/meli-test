@@ -454,6 +454,31 @@ function setupOffline() {
 }
 
 // ─── AVATAR POPUP ─────────────────────────────────────────────────────────────
+function _updateNotifIcon() {
+  const wrap  = document.getElementById('notif-icon-wrap');
+  const label = document.getElementById('notif-label');
+  if (!wrap) return;
+  const perm = ('Notification' in window) ? Notification.permission : 'default';
+  if (perm === 'granted') {
+    wrap.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2">
+      <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/>
+      <circle cx="18" cy="6" r="4" fill="var(--green)" stroke="none"/>
+    </svg>`;
+    if (label) label.style.color = 'var(--green)';
+  } else if (perm === 'denied') {
+    wrap.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2">
+      <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/>
+      <line x1="3" y1="3" x2="21" y2="21" stroke="var(--red)" stroke-width="2"/>
+    </svg>`;
+    if (label) label.style.color = 'var(--red)';
+  } else {
+    wrap.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/>
+    </svg>`;
+    if (label) label.style.color = '';
+  }
+}
+
 function setupAvatarPopup() {
   const av    = document.getElementById('user-avatar');
   const popup = document.getElementById('avatar-popup');
@@ -461,6 +486,7 @@ function setupAvatarPopup() {
 
   av.addEventListener('click', e => {
     e.stopPropagation();
+    _updateNotifIcon();
     popup.classList.toggle('open');
   });
 
@@ -484,6 +510,7 @@ function setupAvatarPopup() {
       toast('✓ Notificaciones activas');
     } else {
       const p = await Notification.requestPermission().catch(() => 'default');
+      _updateNotifIcon();
       toast(p === 'granted' ? '✓ Notificaciones activadas' : 'Notificaciones no activadas');
     }
   });
@@ -739,6 +766,7 @@ function renderPedidos(animDir='') {
     </div>`;
   v.innerHTML = `<div class="ped-main-content${animDir?' '+animDir:''}">${body}</div>`;
   updateCountdowns();
+  updateAppBadge();
 }
 window.setTab = t => {
   const tabs=['preparar','despacho','entregados'];
@@ -773,7 +801,7 @@ function calcDep() {
   }));
   return Object.entries(g)
     .sort(([a],[b])=>{ const[aP,aT]=a.split('||'),[bP,bT]=b.split('||'); return aP!==bP?aP.localeCompare(bP):String(aT).localeCompare(String(bT)); })
-    .map(([k,qty])=>{ const[prod,talle]=k.split('||'); return {prod,talle,qty,queda:Math.max(0,(stock[`${prod}_${talle}`]??0)-qty)}; });
+    .map(([k,qty])=>{ const[prod,talle]=k.split('||'); return {prod,talle,qty,queda:(stock[`${prod}_${talle}`]??0)-qty}; });
 }
 window.toggleDep = () => {
   const box=document.getElementById('dep-box'), btn=document.getElementById('btn-dep'); if (!box) return;
@@ -783,7 +811,7 @@ window.toggleDep = () => {
   box.innerHTML = !lines.length
     ? `<p class="hint-text">Sin pedidos para preparar</p>`
     : `<div class="dep-hdr">A buscar: ${lines.reduce((a,l)=>a+l.qty,0)} pares · ${nP} pedido${nP!==1?'s':''}</div>
-       ${lines.map(l=>`<div class="dep-row"><span class="dep-n">${l.prod} ${displayTalle(l.talle)}</span><span class="dep-q">×${l.qty}</span><span class="dep-r ${l.queda===0?'cero':l.queda<=2?'bajo':'ok'}">queda ${l.queda}</span></div>`).join('')}`;
+       ${lines.map(l=>`<div class="dep-row"><span class="dep-n">${l.prod} ${displayTalle(l.talle)}</span><span class="dep-q">×${l.qty}</span><span class="dep-r ${l.queda<0?'negativo':l.queda===0?'cero':l.queda<=2?'bajo':'ok'}">queda ${l.queda}</span></div>`).join('')}`;
   box.style.display='block'; btn.textContent='🏪 Ocultar';
 };
 
@@ -890,12 +918,6 @@ window.acPreparado = async (id, btn) => {
     renderPedidos(); renderCorte();
     try {
       await db.collection('orders').doc(id).update({status:'pendiente'});
-      if (o.items) {
-        const ns={...stock};
-        o.items.forEach(i=>{const k=`${i.producto}_${i.talle}`;ns[k]=Math.max(0,(ns[k]||0)-1);});
-        stock=ns; saveStock();
-        await db.collection('meta').doc('stock').set(ns);
-      }
     } catch(e){toast('Sin red — se sincronizará');}
   });
 };
@@ -1009,6 +1031,13 @@ window.acEliminar = async id => {
 
   if (order) pushUndo({type:'delete', id, order:JSON.parse(JSON.stringify(order))});
   orders=orders.filter(o=>o.id!==id); saveOrders(); renderPedidos(); renderCorte();
+  // Restaurar stock al eliminar el pedido
+  if (order?.items) {
+    const ns={...stock};
+    order.items.forEach(i=>{const k=`${i.producto}_${i.talle}`;ns[k]=(ns[k]||0)+1;});
+    stock=ns; saveStock();
+    db.collection('meta').doc('stock').set(ns).catch(()=>{});
+  }
   try { await db.collection('orders').doc(id).delete(); } catch(e){toast('Sin red');}
 };
 
@@ -1466,15 +1495,30 @@ async function guardarVenta() {
     base.fechaEstimada=curEnvio==='FLEX'?hoy.toLocaleDateString('es-AR'):man.toLocaleDateString('es-AR');
   }
 
+  haptic([15, 50, 30]);
   closeSheet($shNueva);
 
   try {
     if (editingId) {
+      const oldOrder = orders.find(o=>o.id===editingId);
       await db.collection('orders').doc(editingId).update(base);
       mutateOrder(editingId,base); saveOrders(); renderPedidos(); renderCorte();
+      // Ajustar stock: revertir ítems viejos, descontar ítems nuevos
+      if (oldOrder?.items || base.items) {
+        const ns={...stock};
+        (oldOrder?.items||[]).forEach(i=>{const k=`${i.producto}_${i.talle}`;ns[k]=(ns[k]||0)+1;});
+        (base.items||[]).forEach(i=>{const k=`${i.producto}_${i.talle}`;ns[k]=(ns[k]||0)-1;});
+        stock=ns; saveStock();
+        db.collection('meta').doc('stock').set(ns).catch(()=>{});
+      }
       toast('Actualizado ✓');
     } else {
       base.createdAt=TS();
+      // Descontar stock al momento de guardar el pedido
+      const ns={...stock};
+      (base.items||[]).forEach(i=>{const k=`${i.producto}_${i.talle}`;ns[k]=(ns[k]||0)-1;});
+      stock=ns; saveStock();
+      db.collection('meta').doc('stock').set(ns).catch(()=>{});
       const ref=await db.collection('orders').add(base);
       orders.unshift({id:ref.id,...base}); saveOrders(); renderPedidos(); renderCorte();
       if (typeof meliMarkLoaded === 'function') meliMarkLoaded(_meliId);
@@ -2182,7 +2226,7 @@ function animNumPop(el) {
   el.classList.add('num-pop');
 }
 window.adjSt=(k,d)=>{
-  stock[k]=Math.max(0,(stock[k]??0)+d);
+  stock[k]=(stock[k]??0)+d;
   const el=document.getElementById(`sv-${k}`);
   if(el){el.textContent=stock[k];upRowCls(el,stock[k]);animNumPop(el);}
 };
@@ -2193,11 +2237,11 @@ window.editSt=async k=>{
   if(isNaN(n)||n<0){toast('Número inválido');return;}
   stock[k]=n; el.textContent=n; upRowCls(el,n); animNumPop(el);
 };
-function upRowCls(el,v){const r=el.closest('.stock-row');if(r)r.className=`stock-row ${v===0?'cero':v<=2?'bajo':'ok'}`;}
+function upRowCls(el,v){const r=el.closest('.stock-row');if(r)r.className=`stock-row ${v<0?'negativo':v===0?'cero':v<=2?'bajo':'ok'}`;}
 window.doSaveStock=async()=>{
   saveStock();
   try{ await db.collection('meta').doc('stock').set(stock); toast('Stock guardado ✓'); }
-  catch(e){ toast('Guardado local ✓'); }
+  catch(e){ toast('⚠️ Error al guardar stock — revisá la conexión'); }
 };
 
 // ─── CONFIG / ZONAS FLEX — Zona 1 → Partido → Localidades ────────────────────
@@ -2358,6 +2402,15 @@ function normalizeStr(s){ return s.toLowerCase().normalize('NFD').replace(/[̀-�
 
 function haptic(pattern) {
   try { if (navigator.vibrate) navigator.vibrate(pattern); } catch(e) {}
+}
+
+function updateAppBadge() {
+  const n = orders.filter(o => o.status === 'preparar' || o.status === 'pendiente').length;
+  try {
+    if ('setAppBadge' in navigator) {
+      n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge();
+    }
+  } catch(e) {}
 }
 
 function animCard(id, cls, btn, cb) {
