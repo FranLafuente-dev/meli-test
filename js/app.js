@@ -462,24 +462,32 @@ function _updateNotifIcon() {
   const wrap  = document.getElementById('notif-icon-wrap');
   const label = document.getElementById('notif-label');
   if (!wrap) return;
-  const perm = ('Notification' in window) ? Notification.permission : 'default';
-  if (perm === 'granted') {
-    wrap.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2">
+  const perm  = ('Notification' in window) ? Notification.permission : 'default';
+  const muted = localStorage.getItem('notifMuted') === '1';
+
+  if (perm === 'granted' && !muted) {
+    wrap.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2" stroke-linecap="round">
       <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/>
-      <circle cx="18" cy="6" r="4" fill="var(--green)" stroke="none"/>
+      <circle cx="18" cy="6" r="3.5" fill="var(--green)" stroke="none"/>
     </svg>`;
-    if (label) label.style.color = 'var(--green)';
+    if (label) { label.textContent = 'Notificaciones'; label.style.color = 'var(--green)'; }
+  } else if (perm === 'granted' && muted) {
+    wrap.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="2" stroke-linecap="round">
+      <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/>
+      <line x1="2" y1="2" x2="22" y2="22" stroke="var(--text-3)" stroke-width="2"/>
+    </svg>`;
+    if (label) { label.textContent = 'Notificaciones · silenciadas'; label.style.color = 'var(--text-3)'; }
   } else if (perm === 'denied') {
-    wrap.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2">
+    wrap.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2" stroke-linecap="round">
       <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/>
-      <line x1="3" y1="3" x2="21" y2="21" stroke="var(--red)" stroke-width="2"/>
+      <line x1="2" y1="2" x2="22" y2="22" stroke="var(--red)" stroke-width="2"/>
     </svg>`;
-    if (label) label.style.color = 'var(--red)';
+    if (label) { label.textContent = 'Notificaciones · bloqueadas'; label.style.color = 'var(--red)'; }
   } else {
-    wrap.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    wrap.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/>
     </svg>`;
-    if (label) label.style.color = '';
+    if (label) { label.textContent = 'Notificaciones'; label.style.color = ''; }
   }
 }
 
@@ -487,6 +495,8 @@ function setupAvatarPopup() {
   const av    = document.getElementById('user-avatar');
   const popup = document.getElementById('avatar-popup');
   if (!av || !popup) return;
+
+  _updateNotifIcon();
 
   av.addEventListener('click', e => {
     e.stopPropagation();
@@ -509,14 +519,19 @@ function setupAvatarPopup() {
     popup.classList.remove('open');
     if (!('Notification' in window)) { toast('Notificaciones no disponibles'); return; }
     if (Notification.permission === 'denied') {
-      toast('Notificaciones bloqueadas — activalas en configuración del sistema');
-    } else if (Notification.permission === 'granted') {
-      toast('✓ Notificaciones activas');
-    } else {
-      const p = await Notification.requestPermission().catch(() => 'default');
-      _updateNotifIcon();
-      toast(p === 'granted' ? '✓ Notificaciones activadas' : 'Notificaciones no activadas');
+      toast('Notificaciones bloqueadas — activalas desde ajustes del sistema');
+      return;
     }
+    if (Notification.permission === 'granted') {
+      const muted = localStorage.getItem('notifMuted') === '1';
+      localStorage.setItem('notifMuted', muted ? '0' : '1');
+      _updateNotifIcon();
+      toast(muted ? '🔔 Notificaciones activadas' : '🔕 Notificaciones silenciadas');
+      return;
+    }
+    const p = await Notification.requestPermission().catch(() => 'default');
+    _updateNotifIcon();
+    toast(p === 'granted' ? '🔔 Notificaciones activadas' : 'Notificaciones no activadas');
   });
 
   document.getElementById('popup-meli')?.addEventListener('click', () => {
@@ -662,8 +677,8 @@ function showAlert(type, msg, tipo) {
   if (!hasPending) return;
   $alert.className=`alert-banner show ${type}`; $alert.textContent=msg;
   setTimeout(()=>$alert.classList.remove('show'),8000);
-  if (typeof Notification !== 'undefined' && Notification.permission==='granted')
-    new Notification('Full Sports',{body:msg});
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && localStorage.getItem('notifMuted') !== '1')
+    new Notification('Full Sports', {body: msg});
 }
 function updateCountdowns() {
   document.querySelectorAll('[data-cd]').forEach(el => {
