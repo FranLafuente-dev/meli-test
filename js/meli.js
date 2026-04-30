@@ -58,15 +58,16 @@ function _meliWatchTokens() {
       if (!(acct in d)) continue;
       const fsToken    = d[acct] || null;
       const localToken = meliTokens[acct];
-      if (fsToken?.refreshToken) {
-        // Adoptar el token de Firestore si es más nuevo (mayor expiresAt)
-        if (!localToken?.expiresAt || fsToken.expiresAt > localToken.expiresAt) {
-          meliTokens[acct] = fsToken;
-          changed = true;
-        }
+      if (!localToken && fsToken) {
+        // Sin token local: adoptar el de Firestore (sincronización entre dispositivos)
+        meliTokens[acct] = fsToken;
+        changed = true;
+      } else if (fsToken && localToken && (fsToken.expiresAt || 0) > (localToken.expiresAt || 0)) {
+        // Token más reciente en Firestore: actualizar
+        meliTokens[acct] = fsToken;
+        changed = true;
       }
-      // Si Firestore tiene null: NO sobrescribir un token local válido.
-      // Otro dispositivo puede haber tenido un error; el local puede ser el bueno.
+      // Si Firestore tiene null pero local tiene token: no actualizar
     }
     if (changed) {
       _meliSaveTokensLocal();
@@ -100,17 +101,15 @@ async function _meliLoadFirestore() {
         if (!(acct in d)) continue;
         const fsToken    = d[acct] || null;
         const localToken = meliTokens[acct];
-        if (fsToken?.refreshToken) {
-          // Firestore tiene token: adoptar el que tenga mayor expiresAt (el más reciente)
-          if (!localToken?.expiresAt || fsToken.expiresAt >= localToken.expiresAt) {
-            meliTokens[acct] = fsToken;
-          }
-        } else if (!localToken?.refreshToken) {
-          // Ninguno tiene refreshToken válido
-          meliTokens[acct] = null;
+        if (!localToken) {
+          // Sin token local (navegador nuevo / localStorage vacío): cargar siempre desde Firestore
+          meliTokens[acct] = fsToken;
+        } else if (fsToken && (fsToken.expiresAt || 0) > (localToken.expiresAt || 0)) {
+          // Firestore tiene token más reciente: adoptar
+          meliTokens[acct] = fsToken;
         }
-        // Si Firestore es null pero local tiene refreshToken: conservar local.
-        // Protege el caso donde la race condition ya borró Firestore pero el token sigue vivo.
+        // Si Firestore es null pero local tiene token: conservar local
+        // (protege contra race condition que borró Firestore)
       }
       _meliSaveTokensLocal();
     }
