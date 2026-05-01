@@ -606,8 +606,10 @@ function updateMeliBadge() {
   const n = meliSuggestions.length;
   badge.textContent = n > 0 ? String(n) : '';
   badge.classList.toggle('show', n > 0);
+  if (typeof updateAppBadge === 'function') updateAppBadge();
 }
 window.updateMeliBadge = updateMeliBadge;
+window.getMeliBadgeCount = () => meliSuggestions.length;
 
 let _lastNotifiedSugIds = new Set();
 

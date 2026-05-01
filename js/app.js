@@ -2572,7 +2572,7 @@ function _flashInvalid(el) {
 }
 
 function updateAppBadge() {
-  const n = orders.filter(o => o.status === 'preparar' || o.status === 'pendiente').length;
+  const n = typeof getMeliBadgeCount === 'function' ? getMeliBadgeCount() : 0;
   try {
     if ('setAppBadge' in navigator) {
       n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge();
