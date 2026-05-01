@@ -654,6 +654,19 @@ async function requestNotificationPermission() {
     await Notification.requestPermission().catch(() => {});
 }
 
+function _notify(title, body, tag = 'fs-notif') {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  if (localStorage.getItem('notifMuted') === '1') return;
+  const opts = { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag, renotify: true };
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.ready
+      .then(reg => reg.showNotification(title, opts))
+      .catch(() => new Notification(title, opts));
+  } else {
+    new Notification(title, opts);
+  }
+}
+
 // ─── ALERTAS ──────────────────────────────────────────────────────────────────
 function nextBusinessDay(d) {
   while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
@@ -694,8 +707,7 @@ function showAlert(type, msg, tipo) {
   if (!hasPending) return;
   $alert.className=`alert-banner show ${type}`; $alert.textContent=msg;
   setTimeout(()=>$alert.classList.remove('show'),8000);
-  if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && localStorage.getItem('notifMuted') !== '1')
-    new Notification('Full Sports', {body: msg});
+  _notify('Full Sports', msg, 'fs-alert');
 }
 function updateCountdowns() {
   document.querySelectorAll('[data-cd]').forEach(el => {

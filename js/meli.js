@@ -407,7 +407,13 @@ async function syncMeli(showToast = true) {
     meliSuggestions = suggestions;
     updateMeliBadge();
 
-    if (suggestions.length > 0 && document.hidden) _notifyNewOrders(suggestions.length);
+    // Notificar solo pedidos genuinamente nuevos (no los que ya estaban antes)
+    if (document.hidden) {
+      const newCount = suggestions.filter(s => !_lastNotifiedSugIds.has(s.meliOrderId)).length;
+      if (newCount > 0) _notifyNewOrders(newCount);
+    }
+    _lastNotifiedSugIds = new Set(suggestions.map(s => s.meliOrderId));
+
     await _updateTracking(all);
 
     if (showToast) {
@@ -603,13 +609,15 @@ function updateMeliBadge() {
 }
 window.updateMeliBadge = updateMeliBadge;
 
-function _notifyNewOrders(count) {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  new Notification('FullSports — Pedidos nuevos', {
-    body: `${count} pedido${count > 1 ? 's' : ''} sin cargar`,
-    icon: 'icons/icon-192.png',
-    tag: 'meli-new-orders', renotify: true,
-  });
+let _lastNotifiedSugIds = new Set();
+
+function _notifyNewOrders(newOnes) {
+  if (!newOnes) return;
+  _notify(
+    'FullSports — Pedidos nuevos',
+    `${newOnes} pedido${newOnes > 1 ? 's' : ''} sin cargar`,
+    'meli-new-orders'
+  );
 }
 
 // ─── POLLING ──────────────────────────────────────────────────────────────────
@@ -782,15 +790,20 @@ async function _updateTracking(freshMeliOrders) {
   let changed = false;
   for (const order of inTransit) {
     let mo = freshMeliOrders.find(m => String(m.id) === String(order.meliOrderId));
-    // Si el pedido es más viejo que la ventana del fetch, consultarlo directamente
-    if (!mo && order.cuenta) {
-      try {
-        const token = await _meliGetToken(order.cuenta);
-        if (token) {
-          const fetched = await _meliGet(`/orders/${order.meliOrderId}`, token);
-          mo = { ...fetched, _account: order.cuenta };
-        }
-      } catch(e) {}
+    // Si el pedido es más viejo que la ventana del fetch, consultarlo directamente.
+    // Si no hay cuenta definida, prueba ambas (pedidos cargados antes de la integración MELI).
+    if (!mo) {
+      const acctsTry = order.cuenta ? [order.cuenta] : ['capi', 'enano'];
+      for (const acct of acctsTry) {
+        try {
+          const token = await _meliGetToken(acct);
+          if (token) {
+            const fetched = await _meliGet(`/orders/${order.meliOrderId}`, token);
+            mo = { ...fetched, _account: acct };
+            break;
+          }
+        } catch(e) {}
+      }
     }
     if (!mo) continue;
 
@@ -798,6 +811,10 @@ async function _updateTracking(freshMeliOrders) {
       const f = new Date().toLocaleDateString('es-AR');
       mutateOrder(order.id, { status: 'entregado', fechaEntrega: f, deliveredAt: Date.now() });
       try { await db.collection('orders').doc(order.id).update({ status: 'entregado', deliveredAt: TS(), fechaEntrega: f }); } catch(e) {}
+      const cuenta = order.cuenta || mo._account;
+      if (cuenta === 'capi') {
+        _notify('✅ Entregado — CAPI', `${order.nombreComprador} recibió su pedido`, `capi-delivered-${order.id}`);
+      }
       changed = true;
       continue;
     }
