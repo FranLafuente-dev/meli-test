@@ -256,13 +256,14 @@ body {
   border: none; cursor: pointer;
   display: none; align-items: center; justify-content: center;
   box-shadow:
-    0 4px 18px rgba(255,155,0,0.38),
+    0 4px 20px rgba(255,155,0,0.45),
     0 2px 8px rgba(0,0,0,0.28),
     inset 0 1.5px 0 rgba(255,255,255,0.45);
-  color: #fff; line-height: 1; font-family: inherit;
+  color: #fff; font-family: inherit;
   transition: transform 0.2s var(--spring), box-shadow 0.2s;
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
   will-change: transform; backface-visibility: hidden;
+  overflow: visible;
 }
 .nueva-fab.visible { display: flex; animation: fabIn 0.32s var(--spring) both; }
 @keyframes fabIn {
@@ -273,9 +274,9 @@ body {
 .fab-icon {
   display: flex; align-items: center; justify-content: center;
   width: 100%; height: 100%;
-  font-size: 52px; font-weight: 300; line-height: 1;
   transition: transform 0.3s var(--spring);
-  user-select: none; -webkit-user-select: none;
+  user-select: none; -webkit-user-select: none; pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.22));
 }
 .nueva-fab.menu-open .fab-icon { transform: none; }
 
@@ -488,10 +489,6 @@ body {
 .card-act-sub { display: flex; gap: 6px; }
 .card-act-sub .btn { flex: 1; justify-content: center; }
 
-/* Swipe feedback on cards */
-.order-card { touch-action: pan-y; }
-.order-card.swipe-right { background: linear-gradient(135deg, rgba(52,199,89,0.18) 0%, var(--card) 65%); border-left-color: rgba(52,199,89,0.5); }
-.order-card.swipe-left  { background: linear-gradient(225deg, rgba(255,59,48,0.18) 0%, var(--card) 65%); border-right-color: rgba(255,59,48,0.5); }
 
 .transit-bar { height: 3px; border-radius: 2px; background: var(--border); overflow: hidden; margin-top: 2px; }
 .transit-bar-fill {
@@ -1195,11 +1192,11 @@ input:-webkit-autofill:focus {
 /* ── MELI BADGE EN FAB ───────────────────────────────────────────────────── */
 .meli-badge {
   display: none;
-  position: absolute; top: 2px; left: 52%;
-  min-width: 28px; height: 28px; padding: 0 7px;
+  position: absolute; top: -5px; right: -4px;
+  min-width: 24px; height: 24px; padding: 0 6px;
   background: var(--red); color: #fff;
-  font-size: 15px; font-weight: 800; line-height: 28px;
-  border-radius: 14px; border: 2.5px solid var(--bg);
+  font-size: 13px; font-weight: 800; line-height: 24px;
+  border-radius: 12px; border: 2.5px solid var(--bg);
   text-align: center; pointer-events: none;
   z-index: 2;
 }

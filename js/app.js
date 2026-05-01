@@ -357,7 +357,6 @@ function initUI() {
   setupEditFlexSheet();
   setupPedidosTabSwipe();
   setupCorteTabSwipe();
-  setupCardSwipe();
   setupPedidosSearch();
   requestNotificationPermission();
   navigateTo('pedidos');
@@ -2251,17 +2250,13 @@ function setupEditFlexSheet() {
 // ─── SWIPE ENTRE TABS DE PEDIDOS ─────────────────────────────────────────────
 function setupPedidosTabSwipe() {
   const view = VIEWS.pedidos; if (!view) return;
-  let x0=0, y0=0, onCard=false;
-  view.addEventListener('touchstart',e=>{
-    x0=e.touches[0].clientX; y0=e.touches[0].clientY;
-    onCard = !!e.target.closest('.order-card');
-  },{passive:true});
+  let x0=0, y0=0;
+  view.addEventListener('touchstart',e=>{x0=e.touches[0].clientX;y0=e.touches[0].clientY;},{passive:true});
   view.addEventListener('touchend',e=>{
-    if (onCard) return; // card swipe toma prioridad
     const dx=e.changedTouches[0].clientX-x0, dy=e.changedTouches[0].clientY-y0;
     const adx=Math.abs(dx);
     if (adx<80||Math.abs(dy)>adx*0.55) return;
-    if (adx>=200) return;
+    if (adx>=200) return; // gestos grandes pasan al swipe de sección
     e.stopPropagation();
     const tabs=['preparar','despacho','entregados'], i=tabs.indexOf(pedidosTab);
     if (dx<0&&i<tabs.length-1) setTab(tabs[i+1]);
@@ -2286,61 +2281,6 @@ function setupCorteTabSwipe() {
     if (dx<0&&i<tabs.length-1) setCorte(tabs[i+1], dir);
     if (dx>0&&i>0) setCorte(tabs[i-1], dir);
   },{passive:true});
-}
-
-// ─── SWIPE EN CARDS (dcha = avanzar estado · izq = eliminar) ─────────────────
-function setupCardSwipe() {
-  const view = VIEWS.pedidos; if (!view) return;
-  let startX, startY, card = null, swiping = false;
-
-  view.addEventListener('touchstart', e => {
-    const c = e.target.closest('.order-card[data-oid]');
-    if (!c || e.target.closest('button')) { card = null; return; }
-    startX = e.touches[0].clientX;
-    startY = e.touches[0].clientY;
-    card = c; swiping = false;
-  }, {passive: true});
-
-  view.addEventListener('touchmove', e => {
-    if (!card) return;
-    const dx = e.touches[0].clientX - startX;
-    const dy = e.touches[0].clientY - startY;
-    if (!swiping) {
-      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-      if (Math.abs(dy) > Math.abs(dx) * 0.75) { card = null; return; }
-      swiping = true;
-    }
-    const clamped = Math.max(-130, Math.min(130, dx));
-    card.style.transform = `translateX(${clamped}px)`;
-    card.style.transition = 'none';
-    if (dx > 25)      { card.classList.add('swipe-right'); card.classList.remove('swipe-left'); }
-    else if (dx < -25){ card.classList.add('swipe-left');  card.classList.remove('swipe-right'); }
-    else              { card.classList.remove('swipe-right', 'swipe-left'); }
-  }, {passive: true});
-
-  view.addEventListener('touchend', e => {
-    if (!card || !swiping) { card = null; return; }
-    const dx = e.changedTouches[0].clientX - startX;
-    const c = card; card = null;
-    c.style.transition = 'transform 0.22s ease';
-    c.style.transform = '';
-    c.classList.remove('swipe-right', 'swipe-left');
-    if (Math.abs(dx) < 80) return;
-    const oid = c.dataset.oid;
-    const order = orders.find(o => o.id === oid);
-    if (!order) return;
-    setTimeout(() => {
-      if (dx > 80) {
-        haptic([20, 50, 20]);
-        if (order.status === 'preparar')  acPreparado(oid, null);
-        else if (order.status === 'pendiente') acDespachado(oid, null);
-        else if (order.status === 'camino')    acEntregado(oid, null);
-      } else {
-        haptic([30]);
-        acEliminar(oid);
-      }
-    }, 230);
-  }, {passive: true});
 }
 
 // ─── BÚSQUEDA DE PEDIDOS ──────────────────────────────────────────────────────

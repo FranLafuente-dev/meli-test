@@ -391,8 +391,11 @@ async function syncMeli(showToast = true) {
     const all = [...capiOrders, ...enanoOrders];
 
     const candidates = [];
+    const seenIds = new Set();
     for (const o of all) {
       const id        = String(o.id);
+      if (seenIds.has(id)) continue; // dedup: mismo ID en ambas cuentas o paginación
+      seenIds.add(id);
       const ignored   = meliIgnoredIds.has(id);
       const loaded    = _isMeliOrderLoaded(id);
       const dispatched= _isMeliDispatched(o);
