@@ -1808,6 +1808,33 @@ function getCurrentPeriod() {
   return { id:`${y}-${String(m+1).padStart(2,'0')}-${half}`, label, fromMs, toMs, year:y, month:m+1, half };
 }
 
+function getPreviousPeriod() {
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
+  const half = d <= 15 ? 1 : 2;
+  let py, pm, ph, pfromMs, ptoMs, plastDay;
+  if (half === 1) {
+    // Estamos en 1ra quincena → anterior es 2da quincena del mes pasado
+    py = m === 0 ? y - 1 : y;
+    pm = m === 0 ? 11 : m - 1;
+    ph = 2;
+    plastDay = new Date(py, pm + 1, 0).getDate();
+    pfromMs = new Date(py, pm, 16).getTime();
+    ptoMs   = new Date(py, pm + 1, 0, 23, 59, 59, 999).getTime();
+  } else {
+    // Estamos en 2da quincena → anterior es 1ra quincena de este mes
+    py = y; pm = m; ph = 1; plastDay = 15;
+    pfromMs = new Date(y, m, 1).getTime();
+    ptoMs   = new Date(y, m, 15, 23, 59, 59, 999).getTime();
+  }
+  const labelFrom = ph === 1 ? '1' : '16';
+  return {
+    id: `${py}-${String(pm+1).padStart(2,'0')}-${ph}`,
+    label: `${labelFrom}-${plastDay} ${MESES[pm]} ${py}`,
+    fromMs: pfromMs, toMs: ptoMs, year: py, month: pm+1, half: ph,
+  };
+}
+
 function calcFlexPeriod(fromMs, toMs) {
   const r = {
     capi:  { total:0, count:0, orders:[] },
@@ -1858,7 +1885,29 @@ function renderCorteFlexBody() {
   const filteredOrders = flexFilter ? allOrders.filter(o => o.cuenta === flexFilter) : allOrders;
   const alreadyClosed = flexPeriods.some(p => p.id === period.id);
 
-  let html = `<div class="card" style="padding:16px">
+  // Detectar quincena anterior sin cerrar con datos pendientes
+  const prevPeriod = getPreviousPeriod();
+  const prevClosed = flexPeriods.some(p => p.id === prevPeriod.id);
+  const prevStats  = !prevClosed ? calcFlexPeriod(prevPeriod.fromMs, prevPeriod.toMs) : null;
+  const hasUnclosed = !prevClosed && prevStats && (prevStats.capi.count + prevStats.enano.count) > 0;
+  if (hasUnclosed) window._prevPeriodData = prevPeriod;
+
+  let html = '';
+  if (hasUnclosed) {
+    const pTotal = prevStats.capi.count + prevStats.enano.count;
+    html += `<div class="card" style="padding:14px 16px;border:2px solid var(--orange);margin-bottom:8px">
+      <div style="font-size:14px;font-weight:700;color:var(--orange);margin-bottom:4px">⚠️ Quincena sin cerrar</div>
+      <div style="font-size:13px;color:var(--text-1);font-weight:600;margin-bottom:2px">${prevPeriod.label}</div>
+      <div style="font-size:12px;color:var(--text-2);margin-bottom:10px">
+        CAPI $${fmt(prevStats.capi.total)} · ENANO $${fmt(prevStats.enano.total)} · ${pTotal} envío${pTotal!==1?'s':''}
+      </div>
+      <button class="btn btn-primary" style="width:100%" onclick="cerrarQuincena(window._prevPeriodData)">
+        📥 Cerrar quincena anterior
+      </button>
+    </div>`;
+  }
+
+  html += `<div class="card" style="padding:16px">
     <div class="section-title">Quincena actual — ${period.label}</div>
     <div class="flex-stat-row">
       <div class="flex-stat-box${flexFilter==='capi'?' stat-active':''}" style="background:var(--blue-light)" onclick="setFlexFilter('capi')" title="Filtrar por CAPI">
@@ -1982,8 +2031,8 @@ window.toggleFlexMonth = mk => {
   renderCorte();
 };
 
-window.cerrarQuincena = async () => {
-  const period = getCurrentPeriod();
+window.cerrarQuincena = async (periodoOverride) => {
+  const period = periodoOverride || getCurrentPeriod();
   const stats  = calcFlexPeriod(period.fromMs, period.toMs);
   if (!stats.capi.count && !stats.enano.count) { toast('Sin envíos FLEX en esta quincena'); return; }
   const ok = await showConfirm(`Cerrar quincena "${period.label}"`, {

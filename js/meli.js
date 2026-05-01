@@ -23,6 +23,17 @@ let meliAuthPopup   = null;
 // Dedup: evita que dos pestañas/llamadas simultáneas renueven el mismo token
 const _meliRefreshing = {};
 
+// ─── ALERTA DESCONEXIÓN — notifica siempre, incluso en background ─────────────
+let _lastDisconnectNotifAt = 0;
+function _notifyDisconnected(names) {
+  const now = Date.now();
+  if (now - _lastDisconnectNotifAt < 60 * 60 * 1000) return; // máx una notif por hora
+  _lastDisconnectNotifAt = now;
+  if (typeof _notify === 'function') {
+    _notify('⚠️ MELI desconectada', `${names} — Abrí Ajustes MELI para reconectar`, 'meli-disconnected');
+  }
+}
+
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 async function meliInit() {
   // Si la URL tiene ?code= y ?state=, estamos en el popup de redirect de MELI OAuth.
@@ -324,12 +335,12 @@ async function _meliGetToken(account) {
   const result = await _meliRefreshToken(account);
   if (result === true) return meliTokens[account].token;
   if (result === 'invalid') {
-    // Refresh token definitivamente muerto — requiere reconexión manual
     meliTokens[account] = null;
     _meliSaveToken(account);
     _updateMeliConnectionBanner();
     updateMeliSettingsUI();
     toast(`⚠️ MELI ${account.toUpperCase()} desconectada — abrí Ajustes MELI`);
+    _notifyDisconnected(account.toUpperCase()); // push notification aunque la app esté en background
   }
   // false = error transitorio → no borrar tokens, reintentará en próximo ciclo
   return null;
@@ -375,6 +386,7 @@ async function _fetchTodayOrders(account) {
 // ─── SYNC PRINCIPAL ───────────────────────────────────────────────────────────
 async function syncMeli(showToast = true) {
   if (!meliTokens.capi && !meliTokens.enano) {
+    _notifyDisconnected('CAPI y ENANO'); // siempre, aunque sea polling en background
     if (showToast) toast('⚠️ MELI no conectado — abrí Ajustes MELI');
     _updateMeliConnectionBanner();
     return;
@@ -416,24 +428,23 @@ async function syncMeli(showToast = true) {
 
     await _updateTracking(all);
 
-    if (showToast) {
-      // Verificar estado de cuentas luego del fetch (puede haber cambiado durante el sync)
-      const disc = ['capi', 'enano'].filter(a => !meliTokens[a]);
-      if (disc.length) {
-        const names   = disc.map(a => a.toUpperCase()).join(' y ');
-        const pedPart = suggestions.length > 0
-          ? ` — ${suggestions.length} pedido${suggestions.length > 1 ? 's' : ''} nuevo${suggestions.length > 1 ? 's' : ''}`
-          : '';
-        toast(`⚠️ ${names} desconectada${disc.length > 1 ? 's' : ''}${pedPart}`);
-      } else {
-        toast(suggestions.length > 0
-          ? `${suggestions.length} pedido${suggestions.length > 1 ? 's' : ''} nuevo${suggestions.length > 1 ? 's' : ''} en MELI ✓`
-          : 'MELI sincronizado ✓'
-        );
-      }
+    // Verificar cuentas desconectadas — SIEMPRE (no sólo cuando showToast)
+    const disc = ['capi', 'enano'].filter(a => !meliTokens[a]);
+    if (disc.length) {
+      const names   = disc.map(a => a.toUpperCase()).join(' y ');
+      const pedPart = suggestions.length > 0
+        ? ` — ${suggestions.length} pedido${suggestions.length > 1 ? 's' : ''} nuevo${suggestions.length > 1 ? 's' : ''}`
+        : '';
+      _notifyDisconnected(names); // push notification en cualquier contexto
+      if (showToast) toast(`⚠️ ${names} desconectada${disc.length > 1 ? 's' : ''}${pedPart}`);
+    } else if (showToast) {
+      toast(suggestions.length > 0
+        ? `${suggestions.length} pedido${suggestions.length > 1 ? 's' : ''} nuevo${suggestions.length > 1 ? 's' : ''} en MELI ✓`
+        : 'MELI sincronizado ✓'
+      );
     }
   } catch(e) {
-    if (showToast) toast('Error al sincronizar con MELI');
+    if (showToast) toast('⚠️ Error al sincronizar con MELI');
   } finally {
     if (syncBtn) syncBtn.classList.remove('syncing');
     _updateMeliConnectionBanner();
@@ -635,8 +646,8 @@ function _meliStartTokenKeepAlive() {
     for (const acct of ['capi', 'enano']) {
       const ac = meliTokens[acct];
       if (!ac?.refreshToken) continue;
-      // Refresh si quedan menos de 3 horas
-      if (ac.expiresAt - Date.now() < 3 * 60 * 60 * 1000) {
+      // Refresh si quedan menos de 5 horas (token dura 6h — margen amplio)
+      if (ac.expiresAt - Date.now() < 5 * 60 * 60 * 1000) {
         await _meliRefreshToken(acct);
       }
     }
