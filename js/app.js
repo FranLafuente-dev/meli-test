@@ -46,6 +46,7 @@ let editingId = null, curCuenta = 'capi', curEnvio = 'FLEX';
 let curProducto = null, formItems = [], formEnvio = null;
 let deliveryId = null, deliveryAction = 'edit';
 let fsConectado = false, stockInitialized = false;
+let _fsUnsubs = [];
 let editZoneIdx = null, editZonePriceLabel = null;
 let stockAll = false;
 let expandZonas = new Set(), expandParts = new Set();
@@ -134,37 +135,47 @@ function connectFirestore() {
   fsConectado = true;
 
   let _snapTimer = null;
-  db.collection('orders').orderBy('createdAt','desc').onSnapshot(snap => {
-    orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    saveOrders();
-    clearTimeout(_snapTimer);
-    _snapTimer = setTimeout(() => { renderPedidos(); renderCorte(); checkAutoArchiveEnano(); }, 200);
-  }, e => console.warn('orders:', e));
+  _fsUnsubs.push(
+    db.collection('orders').orderBy('createdAt','desc').onSnapshot(snap => {
+      orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      saveOrders();
+      clearTimeout(_snapTimer);
+      _snapTimer = setTimeout(() => { renderPedidos(); renderCorte(); checkAutoArchiveEnano(); }, 200);
+    }, e => console.warn('orders:', e))
+  );
 
-  db.collection('meta').doc('stock').onSnapshot(snap => {
-    if (snap.exists) {
-      stock = snap.data(); saveStock();
-      initNewProductStock();
-      invalidateProdSort();
-      renderStock();
-    }
-  }, e => console.warn('stock:', e));
+  _fsUnsubs.push(
+    db.collection('meta').doc('stock').onSnapshot(snap => {
+      if (snap.exists) {
+        stock = snap.data(); saveStock();
+        initNewProductStock();
+        invalidateProdSort();
+        renderStock();
+      }
+    }, e => console.warn('stock:', e))
+  );
 
-  db.collection('meta').doc('flexZones').onSnapshot(snap => {
-    if (snap.exists) { zones = snap.data().zones; saveZones(); renderConfig(); }
-  }, e => console.warn('zones:', e));
+  _fsUnsubs.push(
+    db.collection('meta').doc('flexZones').onSnapshot(snap => {
+      if (snap.exists) { zones = snap.data().zones; saveZones(); renderConfig(); }
+    }, e => console.warn('zones:', e))
+  );
 
-  db.collection('meta').doc('flexPeriods').onSnapshot(snap => {
-    if (snap.exists && snap.data().periods) {
-      flexPeriods = snap.data().periods; saveFlexPeriods(); renderCorte();
-    }
-  }, e => console.warn('flexPeriods:', e));
+  _fsUnsubs.push(
+    db.collection('meta').doc('flexPeriods').onSnapshot(snap => {
+      if (snap.exists && snap.data().periods) {
+        flexPeriods = snap.data().periods; saveFlexPeriods(); renderCorte();
+      }
+    }, e => console.warn('flexPeriods:', e))
+  );
 
-  db.collection('meta').doc('flexRecords').onSnapshot(snap => {
-    if (snap.exists && snap.data().records) {
-      flexManualRecords = snap.data().records; saveFlexManual(); renderCorte();
-    }
-  }, e => console.warn('flexRecords:', e));
+  _fsUnsubs.push(
+    db.collection('meta').doc('flexRecords').onSnapshot(snap => {
+      if (snap.exists && snap.data().records) {
+        flexManualRecords = snap.data().records; saveFlexManual(); renderCorte();
+      }
+    }, e => console.warn('flexRecords:', e))
+  );
 }
 
 function initNewProductStock() {
@@ -288,19 +299,19 @@ function syncFlexRecords() {
 }
 
 // ─── AUTO-ARCHIVADO ENANO ─────────────────────────────────────────────────────
-function checkAutoArchiveEnano() {
+async function checkAutoArchiveEnano() {
   const now = Date.now();
   const vencidos = orders.filter(o =>
     o.status === 'camino' && o.cuenta === 'enano' &&
     ms(o.despachadoAt) > 0 && now - ms(o.despachadoAt) >= H24
   );
   if (!vencidos.length) return;
-  vencidos.forEach(async o => {
-    const f = new Date().toLocaleDateString('es-AR');
+  const f = new Date().toLocaleDateString('es-AR');
+  await Promise.all(vencidos.map(async o => {
     mutateOrder(o.id, { status:'entregado', fechaEntrega:f, deliveredAt:Date.now() });
     try { await db.collection('orders').doc(o.id).update({ status:'entregado', deliveredAt:TS(), fechaEntrega:f }); } catch(e) {}
-  });
-  renderPedidos();
+  }));
+  renderPedidos(); renderCorte();
 }
 setInterval(checkAutoArchiveEnano, 60000);
 
@@ -322,11 +333,6 @@ function updateTopbarDate() {
   el.textContent = `${DIAS_SEMANA[n.getDay()]} ${n.getDate()} ${MESES[n.getMonth()]}`;
 }
 
-function updateDispatchBar() {
-  // La info de despacho vive en los botones mkDispBtn — la barra de chips está oculta
-  const bar = document.getElementById('dispatch-bar');
-  if (bar) bar.classList.remove('show');
-}
 
 function setupStockScrollFab() {
   const view = VIEWS.stock;
@@ -547,6 +553,7 @@ function setupAvatarPopup() {
     popup.classList.remove('open');
     if (!await showConfirm('¿Cerrar sesión?', { icon:'👋', confirmText:'Cerrar sesión', confirmClass:'btn-danger' })) return;
     auth.signOut().then(() => {
+      _fsUnsubs.forEach(u => u()); _fsUnsubs = [];
       $app.style.display = 'none';
       document.getElementById('nueva-fab')?.classList.remove('visible');
       $loginScreen.classList.remove('hidden');
@@ -692,7 +699,6 @@ function updateCountdowns() {
     const btn=el.closest('.dispatch-btn');
     if (btn) { btn.classList.remove('warn','urgent'); if (urg) btn.classList.add(urg); }
   });
-  updateDispatchBar();
 }
 
 // ─── PEDIDOS VIEW ─────────────────────────────────────────────────────────────
@@ -1147,7 +1153,10 @@ window.doUndo = async () => {
   REDO_STACK.push(entry);
   await applyHistoryEntry(entry, 'undo');
   updateUndoUI();
-  toast('Deshecho ✓');
+  const nombre = entry.type === 'delete'
+    ? entry.order?.nombreComprador
+    : (entry.id ? orders.find(o => o.id === entry.id)?.nombreComprador : null);
+  toast(nombre ? `↩ Deshecho: ${nombre}` : '↩ Deshecho ✓');
 };
 window.doRedo = async () => {
   if (!REDO_STACK.length) { toast('Sin acciones para rehacer'); return; }
@@ -1155,7 +1164,10 @@ window.doRedo = async () => {
   UNDO_STACK.push(entry);
   await applyHistoryEntry(entry, 'redo');
   updateUndoUI();
-  toast('Rehecho ✓');
+  const nombre = entry.type === 'delete'
+    ? entry.order?.nombreComprador
+    : (entry.id ? orders.find(o => o.id === entry.id)?.nombreComprador : null);
+  toast(nombre ? `↪ Rehecho: ${nombre}` : '↪ Rehecho ✓');
 };
 async function applyHistoryEntry(entry, dir) {
   if (entry.type === 'patch') {
@@ -1404,7 +1416,8 @@ function setupLocalidadSearch() {
       el.addEventListener('touchstart',pick,{passive:false});
     });
   }
-  inp.addEventListener('input',buildResults);
+  let _locTimer;
+  inp.addEventListener('input', () => { clearTimeout(_locTimer); _locTimer = setTimeout(buildResults, 120); });
   document.addEventListener('scroll',()=>{ if(res.classList.contains('show')) positionDropdown(); },true);
   document.addEventListener('click',e=>{ if(!e.target.closest('.search-wrap')&&!res.contains(e.target)) res.classList.remove('show'); });
 }
