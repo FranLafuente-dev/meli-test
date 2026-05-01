@@ -503,10 +503,11 @@ body {
 
 /* ── BOTTOM SHEET — liquid glass ─────────────────────────────────────────── */
 .sheet-overlay {
-  display: none; position: fixed; inset: 0; z-index: 210;
+  position: fixed; inset: 0; z-index: 210;
   background: rgba(0,0,0,0.50); backdrop-filter: blur(8px) saturate(150%); -webkit-backdrop-filter: blur(8px) saturate(150%);
+  opacity: 0; pointer-events: none; transition: opacity 0.28s ease;
 }
-.sheet-overlay.open { display: block; }
+.sheet-overlay.open { opacity: 1; pointer-events: auto; }
 .sheet {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 211;
   background: rgba(16,18,36,0.88);
@@ -515,7 +516,7 @@ body {
   border-radius: 22px 22px 0 0;
   border-top: 1px solid rgba(255,255,255,0.16);
   transform: translateY(100%);
-  transition: transform 0.26s var(--ease-out);
+  transition: transform 0.38s cubic-bezier(0.32, 0.72, 0, 1);
   max-height: 92dvh; display: flex; flex-direction: column;
   will-change: transform; backface-visibility: hidden;
 }
@@ -942,7 +943,7 @@ input:-webkit-autofill:focus {
   padding: 28px 22px 18px; width: 100%; max-width: 308px;
   border: 1px solid rgba(255,255,255,0.18);
   box-shadow: 0 36px 80px rgba(0,0,0,0.72), inset 0 1px 0 rgba(255,255,255,0.22);
-  animation: slideUp 0.18s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  animation: dialogIn 0.28s var(--spring) both;
 }
 @media (prefers-color-scheme: light) {
   .custom-dialog { background: rgba(248,248,252,0.92); border: 1px solid rgba(0,0,0,0.10); box-shadow: 0 20px 60px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,1); }
@@ -957,6 +958,8 @@ input:-webkit-autofill:focus {
 .custom-dialog-btns .btn { border-radius: 14px !important; font-size: 15px; padding: 13px 18px; flex: none; width: 100%; }
 .custom-dialog-btns .btn-ghost { opacity: 0.72; font-weight: 600; }
 .custom-dialog-btns .btn-ghost:active { opacity: 1; }
+.custom-dialog-bg.closing { animation: fadeOut 0.18s ease forwards; }
+.custom-dialog-bg.closing .custom-dialog { animation: dialogOut 0.18s var(--ease-out) both; }
 
 /* ── TOAST — liquid glass ────────────────────────────────────────────────── */
 #toast {
@@ -969,7 +972,7 @@ input:-webkit-autofill:focus {
   padding: 11px 24px; border-radius: 24px;
   font-size: 14px; font-weight: 600; opacity: 0;
   transition: transform 0.32s var(--spring), opacity 0.32s var(--spring);
-  pointer-events: none; z-index: 400; white-space: nowrap;
+  pointer-events: none; z-index: 400; white-space: normal; max-width: min(290px, 88vw); text-align: center;
   box-shadow: 0 12px 40px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.14);
 }
 @media (prefers-color-scheme: light) {
@@ -1054,6 +1057,17 @@ input:-webkit-autofill:focus {
   from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: none; }
 }
+@keyframes dialogIn {
+  from { opacity: 0; transform: translateY(24px) scale(0.94); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes dialogOut {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateY(12px) scale(0.96); }
+}
+@keyframes fadeOut {
+  to { opacity: 0; }
+}
 @keyframes slideInFromRight {
   from { opacity: 0; transform: translateX(12px); }
   to   { opacity: 1; transform: none; }
@@ -1120,11 +1134,14 @@ input:-webkit-autofill:focus {
 .btn-pop              { animation: btnPop 0.22s cubic-bezier(0.34,1.56,0.64,1) both; }
 
 /* Cards — entrada con deslizamiento y stagger */
-.ped-body .order-card { animation: cardIn 0.18s ease-out both; }
-.ped-body .order-card:nth-child(2) { animation-delay: 25ms; }
-.ped-body .order-card:nth-child(3) { animation-delay: 50ms; }
-.ped-body .order-card:nth-child(4) { animation-delay: 75ms; }
-.ped-body .order-card:nth-child(5) { animation-delay: 100ms; }
+.ped-body .order-card { animation: cardIn 0.22s var(--ease-out) both; }
+.ped-body .order-card:nth-child(2) { animation-delay: 30ms; }
+.ped-body .order-card:nth-child(3) { animation-delay: 60ms; }
+.ped-body .order-card:nth-child(4) { animation-delay: 90ms; }
+.ped-body .order-card:nth-child(5) { animation-delay: 120ms; }
+.ped-body .order-card:nth-child(6) { animation-delay: 150ms; }
+.ped-body .order-card:nth-child(7) { animation-delay: 180ms; }
+.ped-body .order-card:nth-child(8) { animation-delay: 210ms; }
 
 /* Filas FLEX — fade rápido */
 .flex-order-row { animation: fadeIn 0.14s ease-out both; }

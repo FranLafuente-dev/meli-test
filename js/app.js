@@ -199,6 +199,13 @@ function initNewProductStock() {
 }
 
 // ─── DIÁLOGO CUSTOM (reemplaza confirm nativo) ───────────────────────────────
+function _closeDlg(bg, resolve, val) {
+  if (bg.dataset.closing) return;
+  bg.dataset.closing = '1';
+  bg.classList.add('closing');
+  setTimeout(() => { bg.remove(); resolve(val); }, 180);
+}
+
 function showConfirm(msg, opts = {}) {
   return new Promise(resolve => {
     const {
@@ -221,9 +228,9 @@ function showConfirm(msg, opts = {}) {
         </div>
       </div>`;
     document.body.appendChild(bg);
-    bg.querySelector('.cd-yes').onclick = () => { bg.remove(); resolve(true); };
-    bg.querySelector('.cd-no').onclick  = () => { bg.remove(); resolve(false); };
-    bg.addEventListener('click', e => { if (e.target === bg) { bg.remove(); resolve(false); } });
+    bg.querySelector('.cd-yes').onclick = () => _closeDlg(bg, resolve, true);
+    bg.querySelector('.cd-no').onclick  = () => _closeDlg(bg, resolve, false);
+    bg.addEventListener('click', e => { if (e.target === bg) _closeDlg(bg, resolve, false); });
   });
 }
 
@@ -247,12 +254,12 @@ function showInputDialog(label, defaultVal = 0) {
     const inp = bg.querySelector('#cd-num-input');
     requestAnimationFrame(() => { inp.focus(); inp.select(); });
     inp.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { bg.remove(); resolve(inp.value); }
-      if (e.key === 'Escape') { bg.remove(); resolve(null); }
+      if (e.key === 'Enter') _closeDlg(bg, resolve, inp.value);
+      if (e.key === 'Escape') _closeDlg(bg, resolve, null);
     });
-    bg.querySelector('.cd-yes').onclick = () => { bg.remove(); resolve(inp.value); };
-    bg.querySelector('.cd-no').onclick  = () => { bg.remove(); resolve(null); };
-    bg.addEventListener('click', e => { if (e.target === bg) { bg.remove(); resolve(null); } });
+    bg.querySelector('.cd-yes').onclick = () => _closeDlg(bg, resolve, inp.value);
+    bg.querySelector('.cd-no').onclick  = () => _closeDlg(bg, resolve, null);
+    bg.addEventListener('click', e => { if (e.target === bg) _closeDlg(bg, resolve, null); });
   });
 }
 
@@ -1001,7 +1008,7 @@ window.acPreparado = async (id, btn) => {
     renderPedidos(); renderCorte();
     try {
       await db.collection('orders').doc(id).update({status:'pendiente'});
-    } catch(e){toast('Sin red — se sincronizará');}
+    } catch(e){toast('📶 Sin red — se sincronizará');}
   });
 };
 
@@ -1011,7 +1018,7 @@ window.acEtiqueta = async id => {
   mutateOrder(id, { etiqueta: val });
   renderPedidos();
   try { await db.collection('orders').doc(id).update({ etiqueta: val }); }
-  catch(e) { toast('Sin red — se sincronizará'); }
+  catch(e) { toast('📶 Sin red — se sincronizará'); }
 };
 
 window.acDespachado = async (id, btn) => {
@@ -1030,7 +1037,7 @@ window.acDespachado = async (id, btn) => {
     if (o.tipoEnvio==='FLEX' && o.flexImporte) _addFlexRecord(o, now);
     renderPedidos();
     try { await db.collection('orders').doc(id).update({status:'camino',despachadoAt:TS(),fechaEstimada:fecha}); }
-    catch(e){toast('Sin red');}
+    catch(e){toast('📶 Sin red — se sincronizará');}
   });
 };
 
@@ -1059,7 +1066,7 @@ window.despacharTodos = async tipo => {
     for(const o of pend)
       await db.collection('orders').doc(o.id).update({status:'camino',despachadoAt:TS(),fechaEstimada:fecha});
     toast(`${pend.length} pedidos ${tipo} despachados ✓`);
-  } catch(e){toast('Sin red');}
+  } catch(e){toast('📶 Sin red — se sincronizará');}
 };
 
 window.acEntregado = async (id, btn) => {
@@ -1071,7 +1078,7 @@ window.acEntregado = async (id, btn) => {
     mutateOrder(id,{status:'entregado',fechaEntrega:f,deliveredAt:Date.now()});
     renderPedidos(); renderCorte();
     try { await db.collection('orders').doc(id).update({status:'entregado',deliveredAt:TS(),fechaEntrega:f}); }
-    catch(e){toast('Sin red');}
+    catch(e){toast('📶 Sin red — se sincronizará');}
   });
 };
 
@@ -1121,7 +1128,7 @@ window.acEliminar = async id => {
     stock=ns; saveStock();
     db.collection('meta').doc('stock').set(ns).catch(()=>{});
   }
-  try { await db.collection('orders').doc(id).delete(); } catch(e){toast('Sin red');}
+  try { await db.collection('orders').doc(id).delete(); } catch(e){toast('📶 Sin red — se sincronizará');}
 };
 
 window.acEditar = id => {
@@ -1227,7 +1234,7 @@ function setupDeliverySheet() {
       if (o?.tipoEnvio==='FLEX' && o.flexImporte) _addFlexRecord(o, now);
       renderPedidos(); renderCorte();
       try { await db.collection('orders').doc(deliveryId).update({status:'camino',despachadoAt:TS(),fechaEstimada:fechaStr}); toast('Despachado ✓'); }
-      catch(e){toast('Sin red');}
+      catch(e){toast('📶 Sin red — se sincronizará');}
     } else {
       mutateOrder(deliveryId,{fechaEstimada:fechaStr}); renderPedidos();
       try { await db.collection('orders').doc(deliveryId).update({fechaEstimada:fechaStr}); } catch(e){}
@@ -1522,7 +1529,7 @@ window.editItemQty = async kEnc => {
   const v = await showInputDialog(`${producto} ${displayTalle(talle)}`, current);
   if (v===null) return;
   const n=parseInt(v);
-  if (isNaN(n)||n<0) { toast('Número inválido'); return; }
+  if (isNaN(n)||n<0) { toast('⚠️ Número inválido'); return; }
   formItems=formItems.filter(i=>!(i.producto===producto&&String(i.talle)===talleStr));
   for(let i=0;i<n;i++) formItems.push({producto,talle});
   renderFormItems();
@@ -1554,8 +1561,8 @@ window.removeGroup = kEnc => {
 // ─── GUARDAR VENTA ────────────────────────────────────────────────────────────
 async function guardarVenta() {
   const nombre=titleCase(V('f-nombre').value.trim());
-  if (!nombre)           { toast('Ingresá el nombre'); _flashInvalid(V('f-nombre')); return; }
-  if (!formItems.length) { toast('Agregá al menos un producto'); _flashInvalid(V('producto-btns')?.querySelector('.producto-btn')); return; }
+  if (!nombre)           { toast('⚠️ Ingresá el nombre'); _flashInvalid(V('f-nombre')); return; }
+  if (!formItems.length) { toast('⚠️ Agregá al menos un producto'); _flashInvalid(V('producto-btns')?.querySelector('.producto-btn')); return; }
 
   // Detección de duplicados solo en nuevos pedidos
   if (!editingId) {
@@ -1580,12 +1587,12 @@ async function guardarVenta() {
     base.iibb=parseNum(V('f-iibb').value)||0;
   }
   if (curEnvio==='FLEX') {
-    if (!formEnvio) { toast('Seleccioná la localidad'); _flashInvalid(V('f-localidad')); return; }
-    const v=parseNum(V('f-importe-flex').value); if (!v) { toast('Ingresá el importe'); _flashInvalid(V('f-importe-flex')); return; }
+    if (!formEnvio) { toast('⚠️ Seleccioná la localidad'); _flashInvalid(V('f-localidad')); return; }
+    const v=parseNum(V('f-importe-flex').value); if (!v) { toast('⚠️ Ingresá el importe'); _flashInvalid(V('f-importe-flex')); return; }
     base.importeVenta=v; base.flexLocalidad=formEnvio.localidad; base.flexZona=formEnvio.zona;
     base.flexImporte=formEnvio.importe; base.importeNeto=v-formEnvio.importe; base.importeAcreditado=base.importeNeto;
   } else {
-    const m=parseNum(V('f-importe-pe').value); if (!m) { toast('Ingresá el importe'); _flashInvalid(V('f-importe-pe')); return; }
+    const m=parseNum(V('f-importe-pe').value); if (!m) { toast('⚠️ Ingresá el importe'); _flashInvalid(V('f-importe-pe')); return; }
     base.importeAcreditado=m;
   }
   if (!editingId) {
@@ -1641,7 +1648,7 @@ async function guardarVenta() {
       if (typeof meliMarkLoaded === 'function') meliMarkLoaded(_meliId);
       toast('Venta guardada ✓');
     }
-  } catch(e){ toast('Error al guardar'); console.error(e); }
+  } catch(e){ toast('⚠️ Error al guardar'); console.error(e); }
   finally { if (btnGuardar) { btnGuardar.disabled = false; btnGuardar.textContent = 'Guardar'; } }
 }
 
@@ -1766,7 +1773,7 @@ window.doCortado = async c=>{
   const pend=orders.filter(o=>!o.corteDone&&o.cuenta===c);
   pend.forEach(o=>mutateOrder(o.id,{corteDone:true})); renderCorte();
   try{for(const o of pend) await db.collection('orders').doc(o.id).update({corteDone:true}); toast('Cortado ✓');}
-  catch(e){toast('Sin red');}
+  catch(e){toast('📶 Sin red — se sincronizará');}
 };
 
 // ─── FLEX QUINCENA ────────────────────────────────────────────────────────────
@@ -1989,7 +1996,7 @@ window.cerrarQuincena = async () => {
   try {
     await db.collection('meta').doc('flexPeriods').set({ periods: flexPeriods });
     toast('Quincena cerrada ✓');
-  } catch(e) { toast('Guardado local ✓'); }
+  } catch(e) { toast('📶 Sin red — se sincronizará'); }
   renderCorte();
 };
 
@@ -2096,7 +2103,7 @@ window.eliminarPeriodo = async id => {
   try {
     await db.collection('meta').doc('flexPeriods').set({ periods: flexPeriods });
     toast('Quincena eliminada ✓');
-  } catch(e) { toast('Guardado local ✓'); }
+  } catch(e) { toast('📶 Sin red — se sincronizará'); }
   renderCorte();
 };
 
@@ -2169,10 +2176,10 @@ function setupAddFlexSheet() {
   V('af-nombre')?.addEventListener('blur', e => { e.target.value = titleCase(e.target.value); });
   V('btn-save-add-flex')?.addEventListener('click', async () => {
     const nombre=titleCase(V('af-nombre').value.trim());
-    if (!nombre) { toast('Ingresá el nombre'); return; }
-    if (!addFlexZone) { toast('Seleccioná la localidad'); return; }
+    if (!nombre) { toast('⚠️ Ingresá el nombre'); return; }
+    if (!addFlexZone) { toast('⚠️ Seleccioná la localidad'); return; }
     const fecha=V('af-fecha').value;
-    if (!fecha) { toast('Ingresá la fecha'); return; }
+    if (!fecha) { toast('⚠️ Ingresá la fecha'); return; }
     const [y,m,d]=fecha.split('-');
     const fechaMs=new Date(+y,+m-1,+d,12,0,0).getTime();
 
@@ -2372,7 +2379,7 @@ window.editSt=async k=>{
   const el=document.getElementById(`sv-${k}`); if(!el)return;
   const v = await showInputDialog(k.replace('_',' '), stock[k]??0);
   if(v===null)return; const n=parseInt(v);
-  if(isNaN(n)||n<0){toast('Número inválido');return;}
+  if(isNaN(n)||n<0){toast('⚠️ Número inválido');return;}
   stock[k]=n; el.textContent=n; upRowCls(el,n); animNumPop(el);
 };
 function upRowCls(el,v){const r=el.closest('.stock-row');if(r)r.className=`stock-row ${v<0?'negativo':v===0?'cero':v<=2?'bajo':'ok'}`;}
@@ -2491,7 +2498,7 @@ function setupZoneSheets() {
     });
     saveZones();
     try{ await db.collection('meta').doc('flexZones').set({zones}); toast(`${editZonePriceLabel} actualizada ✓`); }
-    catch(e){ toast('Guardado localmente ✓'); }
+    catch(e){ toast('📶 Sin red — se sincronizará'); }
     closeSheet($shZoneP); renderConfig();
   });
 
