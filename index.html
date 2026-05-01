@@ -406,7 +406,7 @@
     </div>
 
     <div class="hint-text" style="margin-top:16px;line-height:1.5">
-      El token expira cada 6hs. Al expirar reconectá con el mismo botón.<br>
+      El token se renueva automáticamente cada hora. Solo reconectá si aparece el aviso de desconexión.<br>
       La URL de redirección a configurar en MELI es:<br>
       <span id="meli-redirect-uri" style="color:var(--teal);font-size:11px;word-break:break-all"></span>
     </div>
@@ -420,6 +420,17 @@
 
 <!-- TOAST -->
 <div id="toast"></div>
+
+<!-- MODAL: MELI DESCONECTADA — se cierra manualmente -->
+<div id="meli-reconnect-modal" class="meli-modal-overlay hidden">
+  <div class="meli-modal-card">
+    <div class="meli-modal-icon">⚠️</div>
+    <div class="meli-modal-title">MELI desconectada</div>
+    <div class="meli-modal-msg" id="meli-modal-msg"></div>
+    <button class="btn btn-primary" onclick="meliModalGoToSettings()">Ir a Ajustes MELI</button>
+    <button class="btn btn-ghost" onclick="closeMeliReconnectModal()">Ahora no</button>
+  </div>
+</div>
 
 <!-- Firebase compat SDK -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -439,7 +450,7 @@ const FIREBASE_CONFIG = {
 
 <script src="js/flex-zones.js"></script>
 <script src="js/app.js"></script>
-<script src="js/meli.js?v=2"></script>
+<script src="js/meli.js?v=3"></script>
 
 <script>
 if ('serviceWorker' in navigator) {

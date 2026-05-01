@@ -22,6 +22,8 @@ let meliSelectedSug = null;
 let meliAuthPopup   = null;
 // Dedup: evita que dos pestañas/llamadas simultáneas renueven el mismo token
 const _meliRefreshing = {};
+// Cuentas que fallaron por error transitorio en el último sync (token presente pero sin señal)
+const _meliSyncFailedAccts = new Set();
 
 // ─── ALERTA DESCONEXIÓN — notifica siempre, incluso en background ─────────────
 let _lastDisconnectNotifAt = 0;
@@ -54,7 +56,13 @@ async function meliInit() {
   _updateMeliConnectionBanner();
   _meliWatchTokens(); // listener en tiempo real — propaga tokens renovados a todos los dispositivos
   startMeliPolling();
+  _meliSetupVisibilityWatch();
   if (meliTokens.capi || meliTokens.enano) syncMeli(false);
+  // Modal de alerta si hay cuentas desconectadas (solo si hubo integración previa)
+  if (meliAppId) {
+    const disc = ['capi', 'enano'].filter(a => !meliTokens[a]);
+    if (disc.length) _meliShowReconnectModal(disc);
+  }
 }
 
 // Listener en tiempo real sobre meliConfig en Firestore.
@@ -340,9 +348,11 @@ async function _meliGetToken(account) {
     _updateMeliConnectionBanner();
     updateMeliSettingsUI();
     toast(`⚠️ MELI ${account.toUpperCase()} desconectada — abrí Ajustes MELI`);
-    _notifyDisconnected(account.toUpperCase()); // push notification aunque la app esté en background
+    _notifyDisconnected(account.toUpperCase());
+  } else {
+    // false = error transitorio — marcar para mostrar advertencia en el banner del sync
+    _meliSyncFailedAccts.add(account);
   }
-  // false = error transitorio → no borrar tokens, reintentará en próximo ciclo
   return null;
 }
 
@@ -394,6 +404,7 @@ async function syncMeli(showToast = true) {
   const syncBtn = document.getElementById('btn-sync');
   if (syncBtn) syncBtn.classList.add('syncing');
   if (showToast) toast('Sincronizando MELI...');
+  _meliSyncFailedAccts.clear();
 
   try {
     const [capiOrders, enanoOrders] = await Promise.all([
@@ -428,15 +439,19 @@ async function syncMeli(showToast = true) {
 
     await _updateTracking(all);
 
-    // Verificar cuentas desconectadas — SIEMPRE (no sólo cuando showToast)
+    // Verificar cuentas desconectadas o con señal débil — SIEMPRE
     const disc = ['capi', 'enano'].filter(a => !meliTokens[a]);
+    const silentFailed = ['capi', 'enano'].filter(a => _meliSyncFailedAccts.has(a) && meliTokens[a]);
     if (disc.length) {
       const names   = disc.map(a => a.toUpperCase()).join(' y ');
       const pedPart = suggestions.length > 0
         ? ` — ${suggestions.length} pedido${suggestions.length > 1 ? 's' : ''} nuevo${suggestions.length > 1 ? 's' : ''}`
         : '';
-      _notifyDisconnected(names); // push notification en cualquier contexto
+      _notifyDisconnected(names);
       if (showToast) toast(`⚠️ ${names} desconectada${disc.length > 1 ? 's' : ''}${pedPart}`);
+    } else if (silentFailed.length) {
+      const names = silentFailed.map(a => a.toUpperCase()).join(' y ');
+      if (showToast) toast(`⚠️ MELI ${names} sin señal — reintentando en 15 min`);
     } else if (showToast) {
       toast(suggestions.length > 0
         ? `${suggestions.length} pedido${suggestions.length > 1 ? 's' : ''} nuevo${suggestions.length > 1 ? 's' : ''} en MELI ✓`
@@ -447,7 +462,7 @@ async function syncMeli(showToast = true) {
     if (showToast) toast('⚠️ Error al sincronizar con MELI');
   } finally {
     if (syncBtn) syncBtn.classList.remove('syncing');
-    _updateMeliConnectionBanner();
+    _updateMeliConnectionBanner([..._meliSyncFailedAccts].filter(a => meliTokens[a]));
   }
 }
 window.syncMeli = syncMeli;
@@ -653,6 +668,46 @@ function _meliStartTokenKeepAlive() {
     }
   }, 30 * 60 * 1000); // revisar cada 30 minutos
 }
+
+// ─── FOREGROUND WATCH — sync inmediato al volver al app ──────────────────────
+function _meliSetupVisibilityWatch() {
+  let _lastFgSync = 0;
+  document.addEventListener('visibilitychange', async () => {
+    if (document.hidden) return;
+    const now = Date.now();
+    if (now - _lastFgSync < 5 * 60 * 1000) return; // al menos 5 min entre syncs por visibilidad
+    _lastFgSync = now;
+    // Refresh proactivo si el token vence en menos de 5 horas
+    await Promise.all(['capi', 'enano'].map(async acct => {
+      const ac = meliTokens[acct];
+      if (ac?.refreshToken && ac.expiresAt - Date.now() < 5 * 60 * 60 * 1000) {
+        await _meliRefreshToken(acct);
+      }
+    }));
+    syncMeli(false);
+  });
+}
+
+// ─── MODAL DE RECONEXIÓN ─────────────────────────────────────────────────────
+function _meliShowReconnectModal(disconnectedAccts) {
+  const modal = document.getElementById('meli-reconnect-modal');
+  if (!modal) return;
+  const names = disconnectedAccts.map(a => a.toUpperCase()).join(' y ');
+  const plural = disconnectedAccts.length > 1;
+  document.getElementById('meli-modal-msg').textContent =
+    `La cuenta ${names} ${plural ? 'están desconectadas' : 'está desconectada'} de MELI. `
+    + `Sin conexión los pedidos nuevos no llegan a la app. Para reconectar abrí Ajustes MELI.`;
+  modal.classList.remove('hidden');
+}
+window.closeMeliReconnectModal = function() {
+  document.getElementById('meli-reconnect-modal')?.classList.add('hidden');
+};
+window.meliModalGoToSettings = function() {
+  window.closeMeliReconnectModal();
+  // Abrir avatar popup primero y luego disparar el botón MELI
+  document.getElementById('user-avatar')?.click();
+  setTimeout(() => document.getElementById('popup-meli')?.click(), 120);
+};
 
 // ─── SUGERENCIAS EN FORMULARIO ────────────────────────────────────────────────
 window.toggleMeliPanel = function() {
@@ -870,21 +925,27 @@ function updateMeliSettingsUI() {
   _updateMeliConnectionBanner();
 }
 
-// Banner persistente que aparece en la app cuando hay cuentas desconectadas
-function _updateMeliConnectionBanner() {
+// Banner persistente que aparece en la app cuando hay cuentas desconectadas o sin señal
+function _updateMeliConnectionBanner(silentFailedAccts = []) {
   const banner = document.getElementById('meli-conn-banner');
   if (!banner) return;
   const disc = ['capi', 'enano'].filter(a => !meliTokens[a]);
-  if (disc.length === 0) {
+  if (disc.length === 0 && silentFailedAccts.length === 0) {
     banner.className = 'alert-banner';
     banner.textContent = '';
     return;
   }
-  const names = disc.map(a => a.toUpperCase()).join(' y ');
-  const plural = disc.length > 1;
-  banner.className = 'alert-banner show warning';
-  banner.innerHTML = `⚠️ MELI ${names} desconectada${plural ? 's' : ''} — `
-    + `<span style="text-decoration:underline;cursor:pointer" onclick="document.getElementById('popup-meli')?.click()">abrí Ajustes MELI</span> para reconectar`;
+  if (disc.length > 0) {
+    const names = disc.map(a => a.toUpperCase()).join(' y ');
+    const plural = disc.length > 1;
+    banner.className = 'alert-banner show warning';
+    banner.innerHTML = `⚠️ MELI ${names} desconectada${plural ? 's' : ''} — `
+      + `<span style="text-decoration:underline;cursor:pointer" onclick="document.getElementById('popup-meli')?.click()">abrí Ajustes MELI</span> para reconectar`;
+  } else {
+    const names = silentFailedAccts.map(a => a.toUpperCase()).join(' y ');
+    banner.className = 'alert-banner show warning';
+    banner.textContent = `⚠️ MELI ${names} sin señal — reintentando automáticamente`;
+  }
 }
 function _setStatusEl(elId, ac, label) {
   const el = document.getElementById(elId);

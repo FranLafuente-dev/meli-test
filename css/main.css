@@ -215,6 +215,25 @@ body {
 .alert-banner.warning { background: var(--orange-light); color: var(--orange); }
 .alert-banner.urgent  { background: var(--red-light);    color: var(--red); }
 
+/* ── MELI RECONNECT MODAL ────────────────────────────────────────────────── */
+.meli-modal-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,0.80); backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.meli-modal-overlay.hidden { display: none; }
+.meli-modal-card {
+  background: var(--card); border: 1px solid var(--border-hi);
+  border-radius: var(--radius); padding: 32px 24px; max-width: 340px; width: 100%;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  box-shadow: var(--shadow-lg);
+}
+.meli-modal-icon  { font-size: 48px; margin-bottom: 14px; }
+.meli-modal-title { font-size: 19px; font-weight: 700; color: var(--orange); margin-bottom: 10px; }
+.meli-modal-msg   { font-size: 14px; color: var(--text-2); line-height: 1.6; margin-bottom: 24px; }
+.meli-modal-card .btn         { width: 100%; }
+.meli-modal-card .btn + .btn  { margin-top: 10px; }
+
 /* ── BOTTOM NAV — eliminada, navegación vía FAB radial ──────────────────── */
 #bottom-nav { display: none; }
 .nav-btn {
