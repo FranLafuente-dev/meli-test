@@ -20,14 +20,80 @@ let meliSuggestions = [];
 let meliPollTimer   = null;
 let meliSelectedSug = null;
 let meliAuthPopup   = null;
+// Dedup: evita que dos pestañas/llamadas simultáneas renueven el mismo token
+const _meliRefreshing = {};
+// Cuentas que fallaron por error transitorio en el último sync (token presente pero sin señal)
+const _meliSyncFailedAccts = new Set();
+
+// ─── ALERTA DESCONEXIÓN — notifica siempre, incluso en background ─────────────
+let _lastDisconnectNotifAt = 0;
+function _notifyDisconnected(names) {
+  const now = Date.now();
+  if (now - _lastDisconnectNotifAt < 60 * 60 * 1000) return; // máx una notif por hora
+  _lastDisconnectNotifAt = now;
+  if (typeof _notify === 'function') {
+    _notify('⚠️ MELI desconectada', `${names} — Abrí Ajustes MELI para reconectar`, 'meli-disconnected');
+  }
+}
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 async function meliInit() {
+  // Si la URL tiene ?code= y ?state=, estamos en el popup de redirect de MELI OAuth.
+  // No hacer nada: la ventana principal detecta el código y cierra el popup.
+  const _qs = new URLSearchParams(window.location.search);
+  if (_qs.has('code') && _qs.has('state')) return;
+
   _meliLoadLocal();
   await _meliLoadFirestore();
+  // Refresh inmediato si el access_token ya expiró (antes del primer sync)
+  await Promise.all(['capi', 'enano'].map(async acct => {
+    const ac = meliTokens[acct];
+    if (ac && ac.refreshToken && Date.now() >= ac.expiresAt) {
+      await _meliRefreshToken(acct);
+    }
+  }));
   updateMeliSettingsUI();
+  _updateMeliConnectionBanner();
+  _meliWatchTokens(); // listener en tiempo real — propaga tokens renovados a todos los dispositivos
   startMeliPolling();
+  _meliSetupVisibilityWatch();
   if (meliTokens.capi || meliTokens.enano) syncMeli(false);
+  // Modal de alerta si hay cuentas desconectadas (solo si hubo integración previa)
+  if (meliAppId) {
+    const disc = ['capi', 'enano'].filter(a => !meliTokens[a]);
+    if (disc.length) _meliShowReconnectModal(disc);
+  }
+}
+
+// Listener en tiempo real sobre meliConfig en Firestore.
+// Cuando cualquier dispositivo renueva un token y lo guarda, todos los demás
+// reciben el nuevo token inmediatamente sin necesidad de reconectarse.
+function _meliWatchTokens() {
+  db.collection('meta').doc('meliConfig').onSnapshot(snap => {
+    if (!snap.exists) return;
+    const d = snap.data();
+    let changed = false;
+    for (const acct of ['capi', 'enano']) {
+      if (!(acct in d)) continue;
+      const fsToken    = d[acct] || null;
+      const localToken = meliTokens[acct];
+      if (!localToken && fsToken) {
+        // Sin token local: adoptar el de Firestore (sincronización entre dispositivos)
+        meliTokens[acct] = fsToken;
+        changed = true;
+      } else if (fsToken && localToken && (fsToken.expiresAt || 0) > (localToken.expiresAt || 0)) {
+        // Token más reciente en Firestore: actualizar
+        meliTokens[acct] = fsToken;
+        changed = true;
+      }
+      // Si Firestore tiene null pero local tiene token: no actualizar
+    }
+    if (changed) {
+      _meliSaveTokensLocal();
+      _updateMeliConnectionBanner();
+      updateMeliSettingsUI();
+    }
+  }, () => {}); // silenciar error del listener sin romper nada
 }
 
 function _meliLoadLocal() {
@@ -50,8 +116,20 @@ async function _meliLoadFirestore() {
       const d = s.data();
       if (d.appId)  { meliAppId  = d.appId;  localStorage.setItem(LS_MELI_APPID,  d.appId);  }
       if (d.secret) { meliSecret = d.secret; localStorage.setItem(LS_MELI_SECRET, d.secret); }
-      if (d.capi)  meliTokens.capi  = d.capi;
-      if (d.enano) meliTokens.enano = d.enano;
+      for (const acct of ['capi', 'enano']) {
+        if (!(acct in d)) continue;
+        const fsToken    = d[acct] || null;
+        const localToken = meliTokens[acct];
+        if (!localToken) {
+          // Sin token local (navegador nuevo / localStorage vacío): cargar siempre desde Firestore
+          meliTokens[acct] = fsToken;
+        } else if (fsToken && (fsToken.expiresAt || 0) > (localToken.expiresAt || 0)) {
+          // Firestore tiene token más reciente: adoptar
+          meliTokens[acct] = fsToken;
+        }
+        // Si Firestore es null pero local tiene token: conservar local
+        // (protege contra race condition que borró Firestore)
+      }
       _meliSaveTokensLocal();
     }
   } catch(e) {}
@@ -68,14 +146,23 @@ function _meliSaveTokensLocal() {
   try { localStorage.setItem(LS_MELI_TOKENS, JSON.stringify(meliTokens)); } catch(e) {}
 }
 
-function _meliSaveConfig() {
+// Guarda UN SOLO token de cuenta — merge:true para no pisar el token de la otra cuenta
+function _meliSaveToken(acct) {
   _meliSaveTokensLocal();
+  db.collection('meta').doc('meliConfig').set(
+    { [acct]: meliTokens[acct] || null },
+    { merge: true }
+  ).catch(() => {});
+}
+
+// Guarda solo App ID y Secret — merge:true para no tocar los tokens
+function _meliSaveMeta() {
   try { localStorage.setItem(LS_MELI_APPID,  meliAppId);  } catch(e) {}
   try { localStorage.setItem(LS_MELI_SECRET, meliSecret); } catch(e) {}
-  db.collection('meta').doc('meliConfig').set({
-    appId: meliAppId, secret: meliSecret || null,
-    capi: meliTokens.capi || null, enano: meliTokens.enano || null,
-  }).catch(() => {});
+  db.collection('meta').doc('meliConfig').set(
+    { appId: meliAppId, secret: meliSecret || null },
+    { merge: true }
+  ).catch(() => {});
 }
 
 function _meliSaveIgnored() {
@@ -131,10 +218,6 @@ window.meliOpenAuth = async (account) => {
     + `&code_challenge_method=S256`
     + `&scope=offline_access`;
 
-  console.log('[MELI] App ID:', appId);
-  console.log('[MELI] Redirect URI:', redirectUri);
-  console.log('[MELI] Auth URL:', url);
-
   if (meliAuthPopup && !meliAuthPopup.closed) meliAuthPopup.close();
   meliAuthPopup = window.open(url, 'meli_auth', 'width=620,height=740,left=100,top=60');
   if (!meliAuthPopup) { toast('Habilitá pop-ups para conectar MELI'); return; }
@@ -174,7 +257,6 @@ async function _meliExchangeCode(account, code, verifier, redirectUri) {
       body: new URLSearchParams(params),
     });
     const data = await res.json();
-    console.log('[MELI] exchange response:', res.status, JSON.stringify(data));
     if (!res.ok || !data.access_token) {
       toast(`Error MELI: ${data.message || data.error || res.status}`);
       return;
@@ -185,7 +267,8 @@ async function _meliExchangeCode(account, code, verifier, redirectUri) {
       userId:       String(data._user?.id || data.user_id),
       expiresAt:    Date.now() + (data.expires_in * 1000) - 120000,
     };
-    _meliSaveConfig();
+    _meliSaveToken(account);
+    _meliSaveMeta();
     localStorage.removeItem('meli_pkce_verifier');
     localStorage.removeItem('meli_pkce_account');
     updateMeliSettingsUI();
@@ -198,32 +281,58 @@ async function _meliExchangeCode(account, code, verifier, redirectUri) {
 }
 
 async function _meliRefreshToken(account) {
-  const ac = meliTokens[account];
-  if (!ac?.refreshToken) return false;
-  try {
-    const params = {
-      grant_type:    'refresh_token',
-      client_id:     meliAppId,
-      refresh_token: ac.refreshToken,
-    };
-    if (meliSecret) params.client_secret = meliSecret;
-    const res = await fetch(`${MELI_WORKER_BASE}/api/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-      body: new URLSearchParams(params),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.access_token) return false;
-    meliTokens[account] = {
-      ...ac,
-      token:        data.access_token,
-      refreshToken: data.refresh_token || ac.refreshToken,
-      expiresAt:    Date.now() + (data.expires_in * 1000) - 120000,
-    };
-    _meliSaveConfig();
-    updateMeliSettingsUI();
-    return true;
-  } catch(e) { return false; }
+  // Dedup: si ya hay un refresh en curso para esta cuenta, esperar ese resultado
+  if (_meliRefreshing[account]) return _meliRefreshing[account];
+  const p = (async () => {
+    const ac = meliTokens[account];
+    if (!ac?.refreshToken) return false;
+    try {
+      const params = {
+        grant_type:    'refresh_token',
+        client_id:     meliAppId,
+        refresh_token: ac.refreshToken,
+      };
+      if (meliSecret) params.client_secret = meliSecret;
+      const res = await fetch(`${MELI_WORKER_BASE}/api/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+        body: new URLSearchParams(params),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.access_token) {
+        if (data.error === 'invalid_grant' || (data.message || '').toLowerCase().includes('invalid')) {
+          // Antes de declarar el token muerto: re-leer Firestore.
+          // Otra pestaña/dispositivo puede haber renovado ya, invalidando nuestro refreshToken.
+          try {
+            const snap = await db.collection('meta').doc('meliConfig').get();
+            if (snap.exists) {
+              const fsToken = snap.data()[account];
+              if (fsToken?.refreshToken && (fsToken.expiresAt || 0) > Date.now()) {
+                // Otra instancia ya renovó — adoptar ese token
+                meliTokens[account] = fsToken;
+                _meliSaveTokensLocal();
+                updateMeliSettingsUI();
+                return true;
+              }
+            }
+          } catch(e) {}
+          return 'invalid';
+        }
+        return false; // error HTTP transitorio — no borrar tokens
+      }
+      meliTokens[account] = {
+        ...ac,
+        token:        data.access_token,
+        refreshToken: data.refresh_token || ac.refreshToken,
+        expiresAt:    Date.now() + (data.expires_in * 1000) - 120000,
+      };
+      _meliSaveToken(account);
+      updateMeliSettingsUI();
+      return true;
+    } catch(e) { return false; } // error de red → no borrar tokens
+  })();
+  _meliRefreshing[account] = p;
+  try { return await p; } finally { _meliRefreshing[account] = null; }
 }
 
 // Obtener token válido (renueva automáticamente con refresh_token)
@@ -231,14 +340,19 @@ async function _meliGetToken(account) {
   const ac = meliTokens[account];
   if (!ac) return null;
   if (Date.now() < ac.expiresAt) return ac.token;
-  // Intentar renovar
-  const ok = await _meliRefreshToken(account);
-  if (ok) return meliTokens[account].token;
-  // Sin refresh_token o falló: pedir reconexión
-  meliTokens[account] = null;
-  _meliSaveConfig();
-  updateMeliSettingsUI();
-  toast(`Sesión MELI ${account.toUpperCase()} expirada — reconectá`);
+  const result = await _meliRefreshToken(account);
+  if (result === true) return meliTokens[account].token;
+  if (result === 'invalid') {
+    meliTokens[account] = null;
+    _meliSaveToken(account);
+    _updateMeliConnectionBanner();
+    updateMeliSettingsUI();
+    toast(`⚠️ MELI ${account.toUpperCase()} desconectada — abrí Ajustes MELI`);
+    _notifyDisconnected(account.toUpperCase());
+  } else {
+    // false = error transitorio — marcar para mostrar advertencia en el banner del sync
+    _meliSyncFailedAccts.add(account);
+  }
   return null;
 }
 
@@ -254,55 +368,43 @@ async function _meliGet(path, token) {
 // ─── FETCH ÓRDENES RECIENTES ──────────────────────────────────────────────────
 async function _fetchTodayOrders(account) {
   const token = await _meliGetToken(account);
-  if (!token) { console.warn(`[MELI] ${account}: sin token`); return []; }
+  if (!token) return [];
   const ac = meliTokens[account];
-  if (!ac?.userId) { console.warn(`[MELI] ${account}: sin userId`); return []; }
+  if (!ac?.userId) return [];
 
-  console.log(`[MELI] ${account}: seller ${ac.userId} — verificando token...`);
-  try {
-    const me = await _meliGet('/users/me', token);
-    console.log(`[MELI] ${account}: token OK — user ${me.id} (${me.nickname})`);
-  } catch(e) {
-    console.warn(`[MELI] ${account}: token inválido —`, e.message);
-    return [];
-  }
-
-  // Probar dos variantes del endpoint
   const endpoints = [
     `/orders/search?seller=${ac.userId}&limit=50&sort=date_desc`,
     `/users/${ac.userId}/orders/search?limit=50&sort=date_desc`,
   ];
   let results = null;
+
   for (const ep of endpoints) {
     try {
-      console.log(`[MELI] ${account}: probando ${ep}`);
       const data = await _meliGet(ep, token);
-      console.log(`[MELI] ${account}: ${ep} → ${(data.results||[]).length} órdenes`);
       results = data.results || [];
       break;
-    } catch(e) {
-      console.warn(`[MELI] ${account}: ${ep} falló — ${e.message}`);
-    }
+    } catch(e) { /* siguiente endpoint */ }
   }
   if (!results) return [];
 
-  const cutoff = Date.now() - 48 * 3600 * 1000;
-  const filtered = results.filter(o =>
-    o.status === 'paid' && new Date(o.date_created).getTime() >= cutoff
-  );
-  console.log(`[MELI] ${account}: ${filtered.length} órdenes pagadas en últimas 48h`);
-  return filtered.map(o => ({ ...o, _account: account }));
+  const cutoff = Date.now() - 72 * 3600 * 1000;
+  return results
+    .filter(o => o.status === 'paid' && new Date(o.date_created).getTime() >= cutoff)
+    .map(o => ({ ...o, _account: account }));
 }
 
 // ─── SYNC PRINCIPAL ───────────────────────────────────────────────────────────
 async function syncMeli(showToast = true) {
   if (!meliTokens.capi && !meliTokens.enano) {
-    if (showToast) toast('MELI no conectado — configurá en ajustes');
+    _notifyDisconnected('CAPI y ENANO'); // siempre, aunque sea polling en background
+    if (showToast) toast('⚠️ MELI no conectado — abrí Ajustes MELI');
+    _updateMeliConnectionBanner();
     return;
   }
   const syncBtn = document.getElementById('btn-sync');
   if (syncBtn) syncBtn.classList.add('syncing');
   if (showToast) toast('Sincronizando MELI...');
+  _meliSyncFailedAccts.clear();
 
   try {
     const [capiOrders, enanoOrders] = await Promise.all([
@@ -312,12 +414,14 @@ async function syncMeli(showToast = true) {
     const all = [...capiOrders, ...enanoOrders];
 
     const candidates = [];
+    const seenIds = new Set();
     for (const o of all) {
       const id        = String(o.id);
+      if (seenIds.has(id)) continue; // dedup: mismo ID en ambas cuentas o paginación
+      seenIds.add(id);
       const ignored   = meliIgnoredIds.has(id);
       const loaded    = _isMeliOrderLoaded(id);
       const dispatched= _isMeliDispatched(o);
-      console.log(`[MELI] orden ${id} (${o._account}) status=${o.status} shipping=${o.shipping?.status} → ignored=${ignored} loaded=${loaded} dispatched=${dispatched}`);
       if (ignored || loaded || dispatched) continue;
       candidates.push(o);
     }
@@ -326,20 +430,39 @@ async function syncMeli(showToast = true) {
     meliSuggestions = suggestions;
     updateMeliBadge();
 
-    if (suggestions.length > 0 && document.hidden) _notifyNewOrders(suggestions.length);
+    // Notificar solo pedidos genuinamente nuevos (no los que ya estaban antes)
+    if (document.hidden) {
+      const newCount = suggestions.filter(s => !_lastNotifiedSugIds.has(s.meliOrderId)).length;
+      if (newCount > 0) _notifyNewOrders(newCount);
+    }
+    _lastNotifiedSugIds = new Set(suggestions.map(s => s.meliOrderId));
+
     await _updateTracking(all);
 
-    if (showToast) {
+    // Verificar cuentas desconectadas o con señal débil — SIEMPRE
+    const disc = ['capi', 'enano'].filter(a => !meliTokens[a]);
+    const silentFailed = ['capi', 'enano'].filter(a => _meliSyncFailedAccts.has(a) && meliTokens[a]);
+    if (disc.length) {
+      const names   = disc.map(a => a.toUpperCase()).join(' y ');
+      const pedPart = suggestions.length > 0
+        ? ` — ${suggestions.length} pedido${suggestions.length > 1 ? 's' : ''} nuevo${suggestions.length > 1 ? 's' : ''}`
+        : '';
+      _notifyDisconnected(names);
+      if (showToast) toast(`⚠️ ${names} desconectada${disc.length > 1 ? 's' : ''}${pedPart}`);
+    } else if (silentFailed.length) {
+      const names = silentFailed.map(a => a.toUpperCase()).join(' y ');
+      if (showToast) toast(`⚠️ MELI ${names} sin señal — reintentando en 15 min`);
+    } else if (showToast) {
       toast(suggestions.length > 0
         ? `${suggestions.length} pedido${suggestions.length > 1 ? 's' : ''} nuevo${suggestions.length > 1 ? 's' : ''} en MELI ✓`
         : 'MELI sincronizado ✓'
       );
     }
   } catch(e) {
-    console.warn('MELI sync:', e);
-    if (showToast) toast('Error al sincronizar con MELI');
+    if (showToast) toast('⚠️ Error al sincronizar con MELI');
   } finally {
     if (syncBtn) syncBtn.classList.remove('syncing');
+    _updateMeliConnectionBanner([..._meliSyncFailedAccts].filter(a => meliTokens[a]));
   }
 }
 window.syncMeli = syncMeli;
@@ -356,7 +479,7 @@ async function _enrichFromShipment(orders) {
       if (s.logistic_type) o.shipping.logistic_type = s.logistic_type;
       if (s.mode)          o.shipping.mode          = s.mode;
       if (s.tags)          o.shipping.tags          = s.tags;
-    } catch(e) { console.warn(`[MELI] shipment ${o.shipping?.id}:`, e.message); }
+    } catch(e) { /* enrich failed — skip silently */ }
   }));
 }
 
@@ -369,13 +492,26 @@ function _isMeliDispatched(order) {
 }
 
 // ─── CONSTRUIR SUGERENCIA ─────────────────────────────────────────────────────
+function _findFlexZone(localidad, provincia) {
+  const norm     = localidad ? normalizeStr(localidad.toLowerCase()) : '';
+  const provNorm = provincia ? normalizeStr(provincia.toLowerCase()) : '';
+  // Solo GBA/CABA entran en FLEX; otras provincias → PE
+  const isCaba = provNorm.includes('autonoma') || provNorm.includes('capital federal');
+  const isBsAs = !isCaba && provNorm.includes('buenos aires');
+  if (!norm || (!isCaba && !isBsAs)) return null;
+  const allZones = typeof zones !== 'undefined' ? zones : [];
+  return allZones.find(z => {
+    const zNorm = normalizeStr(z.localidad.toLowerCase());
+    if (!(zNorm === norm || zNorm.includes(norm) || norm.includes(zNorm))) return false;
+    // Evitar falsos positivos: "Chacabuco" (BsAs) no debe caer en "Parque Chacabuco" (CABA)
+    return isCaba ? z.zona.includes('CABA') : !z.zona.includes('CABA');
+  }) || null;
+}
+
 function _buildSuggestion(order) {
   const localidad = _getLocality(order);
-  const norm = localidad ? normalizeStr(localidad.toLowerCase()) : '';
-  const zone = norm && (typeof zones !== 'undefined' ? zones : []).find(z =>
-    normalizeStr(z.localidad.toLowerCase()).includes(norm) ||
-    norm.includes(normalizeStr(z.localidad.toLowerCase()))
-  );
+  const provincia = _getProvince(order);
+  const zone      = _findFlexZone(localidad, provincia);
   return {
     meliOrderId: String(order.id),
     account:     order._account,
@@ -383,7 +519,7 @@ function _buildSuggestion(order) {
     nickname:    order.buyer?.nickname || '',
     tipoEnvio:   zone ? 'FLEX' : 'PE',
     localidad,
-    provincia:   _getProvince(order),
+    provincia,
     importe:     _getAmount(order),
     items:       _parseItems(order.order_items),
     dateCreated: order.date_created,
@@ -403,7 +539,6 @@ function _detectShipping(order) {
   if (flexLogistics.includes(logistic)) return 'FLEX';
   if (mode === 'me2') return 'FLEX';
   if (allTags.some(t => flexTagWords.some(w => t.includes(w)))) return 'FLEX';
-  console.log(`[MELI] shipping detect — logistic=${logistic} mode=${mode} tags=${JSON.stringify([...tags,...shipTags])}`);
   return 'PE';
 }
 function _getBuyerName(order) {
@@ -497,23 +632,82 @@ function updateMeliBadge() {
   const n = meliSuggestions.length;
   badge.textContent = n > 0 ? String(n) : '';
   badge.classList.toggle('show', n > 0);
+  if (typeof updateAppBadge === 'function') updateAppBadge();
 }
 window.updateMeliBadge = updateMeliBadge;
+window.getMeliBadgeCount = () => meliSuggestions.length;
 
-function _notifyNewOrders(count) {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  new Notification('FullSports — Pedidos nuevos', {
-    body: `${count} pedido${count > 1 ? 's' : ''} sin cargar`,
-    icon: 'icons/icon-192.png',
-    tag: 'meli-new-orders', renotify: true,
-  });
+let _lastNotifiedSugIds = new Set();
+
+function _notifyNewOrders(newOnes) {
+  if (!newOnes) return;
+  _notify(
+    'FullSports — Pedidos nuevos',
+    `${newOnes} pedido${newOnes > 1 ? 's' : ''} sin cargar`,
+    'meli-new-orders'
+  );
 }
 
 // ─── POLLING ──────────────────────────────────────────────────────────────────
 function startMeliPolling() {
   if (meliPollTimer) clearInterval(meliPollTimer);
   meliPollTimer = setInterval(() => syncMeli(false), MELI_POLL_MS);
+  _meliStartTokenKeepAlive();
 }
+
+// Refresca tokens proactivamente antes de que expiren
+function _meliStartTokenKeepAlive() {
+  setInterval(async () => {
+    for (const acct of ['capi', 'enano']) {
+      const ac = meliTokens[acct];
+      if (!ac?.refreshToken) continue;
+      // Refresh si quedan menos de 5 horas (token dura 6h — margen amplio)
+      if (ac.expiresAt - Date.now() < 5 * 60 * 60 * 1000) {
+        await _meliRefreshToken(acct);
+      }
+    }
+  }, 30 * 60 * 1000); // revisar cada 30 minutos
+}
+
+// ─── FOREGROUND WATCH — sync inmediato al volver al app ──────────────────────
+function _meliSetupVisibilityWatch() {
+  let _lastFgSync = 0;
+  document.addEventListener('visibilitychange', async () => {
+    if (document.hidden) return;
+    const now = Date.now();
+    if (now - _lastFgSync < 5 * 60 * 1000) return; // al menos 5 min entre syncs por visibilidad
+    _lastFgSync = now;
+    // Refresh proactivo si el token vence en menos de 5 horas
+    await Promise.all(['capi', 'enano'].map(async acct => {
+      const ac = meliTokens[acct];
+      if (ac?.refreshToken && ac.expiresAt - Date.now() < 5 * 60 * 60 * 1000) {
+        await _meliRefreshToken(acct);
+      }
+    }));
+    syncMeli(false);
+  });
+}
+
+// ─── MODAL DE RECONEXIÓN ─────────────────────────────────────────────────────
+function _meliShowReconnectModal(disconnectedAccts) {
+  const modal = document.getElementById('meli-reconnect-modal');
+  if (!modal) return;
+  const names = disconnectedAccts.map(a => a.toUpperCase()).join(' y ');
+  const plural = disconnectedAccts.length > 1;
+  document.getElementById('meli-modal-msg').textContent =
+    `La cuenta ${names} ${plural ? 'están desconectadas' : 'está desconectada'} de MELI. `
+    + `Sin conexión los pedidos nuevos no llegan a la app. Para reconectar abrí Ajustes MELI.`;
+  modal.classList.remove('hidden');
+}
+window.closeMeliReconnectModal = function() {
+  document.getElementById('meli-reconnect-modal')?.classList.add('hidden');
+};
+window.meliModalGoToSettings = function() {
+  window.closeMeliReconnectModal();
+  // Abrir avatar popup primero y luego disparar el botón MELI
+  document.getElementById('user-avatar')?.click();
+  setTimeout(() => document.getElementById('popup-meli')?.click(), 120);
+};
 
 // ─── SUGERENCIAS EN FORMULARIO ────────────────────────────────────────────────
 window.toggleMeliPanel = function() {
@@ -592,11 +786,7 @@ function _fillFormFromSuggestion(sug) {
     tag.classList.remove('hidden');
   }
   if (sug.localidad) {
-    const norm = normalizeStr(sug.localidad.toLowerCase());
-    const zone = (typeof zones !== 'undefined' ? zones : []).find(z =>
-      normalizeStr(z.localidad.toLowerCase()).includes(norm) ||
-      norm.includes(normalizeStr(z.localidad.toLowerCase()))
-    );
+    const zone = _findFlexZone(sug.localidad, sug.provincia);
     if (zone) {
       setEnvio('FLEX');
       formEnvio = { localidad: zone.localidad, zona: zone.zona, importe: zone.importe };
@@ -654,7 +844,7 @@ async function meliCheckDispatch(pendOrders) {
       const st = mo.shipping?.status;
       if (!['shipped', 'delivered', 'handling', 'ready_to_ship'].includes(st))
         inconsistentes.push(order.nombreComprador);
-    } catch(e) { console.warn('MELI dispatch check:', e.message); }
+    } catch(e) { /* dispatch check failed — skip silently */ }
   }
   if (inconsistentes.length)
     toast(`⚠️ Sin despacho en MELI: ${inconsistentes.join(', ')}`, 6000);
@@ -667,12 +857,56 @@ async function _updateTracking(freshMeliOrders) {
   if (!inTransit.length) return;
   let changed = false;
   for (const order of inTransit) {
-    const mo = freshMeliOrders.find(m => String(m.id) === String(order.meliOrderId));
-    if (mo?.shipping?.status === 'delivered') {
+    let mo = freshMeliOrders.find(m => String(m.id) === String(order.meliOrderId));
+    // Si el pedido es más viejo que la ventana del fetch, consultarlo directamente.
+    // Si no hay cuenta definida, prueba ambas (pedidos cargados antes de la integración MELI).
+    if (!mo) {
+      const acctsTry = order.cuenta ? [order.cuenta] : ['capi', 'enano'];
+      for (const acct of acctsTry) {
+        try {
+          const token = await _meliGetToken(acct);
+          if (token) {
+            const fetched = await _meliGet(`/orders/${order.meliOrderId}`, token);
+            mo = { ...fetched, _account: acct };
+            break;
+          }
+        } catch(e) {}
+      }
+    }
+    if (!mo) continue;
+
+    if (mo.shipping?.status === 'delivered') {
       const f = new Date().toLocaleDateString('es-AR');
       mutateOrder(order.id, { status: 'entregado', fechaEntrega: f, deliveredAt: Date.now() });
       try { await db.collection('orders').doc(order.id).update({ status: 'entregado', deliveredAt: TS(), fechaEntrega: f }); } catch(e) {}
+      const cuenta = order.cuenta || mo._account;
+      if (cuenta === 'capi') {
+        _notify('✅ Entregado — CAPI', `${order.nombreComprador} recibió su pedido`, `capi-delivered-${order.id}`);
+      }
       changed = true;
+      continue;
+    }
+
+    // Actualizar fecha estimada de entrega desde MELI en tiempo real
+    if (mo.shipping?.id) {
+      try {
+        const acct = mo._account || order.cuenta;
+        const token = await _meliGetToken(acct);
+        if (token) {
+          const s = await _meliGet(`/shipments/${mo.shipping.id}`, token);
+          const etaRaw = s.shipping_option?.estimated_delivery_time?.date
+            || s.estimated_delivery_limit?.date
+            || null;
+          if (etaRaw) {
+            const etaDate = new Date(etaRaw).toLocaleDateString('es-AR');
+            if (etaDate !== order.fechaEstimada) {
+              mutateOrder(order.id, { fechaEstimada: etaDate });
+              try { await db.collection('orders').doc(order.id).update({ fechaEstimada: etaDate }); } catch(e) {}
+              changed = true;
+            }
+          }
+        }
+      } catch(e) {}
     }
   }
   if (changed) renderPedidos();
@@ -688,17 +922,36 @@ function updateMeliSettingsUI() {
   if (inpSec && meliSecret && !inpSec.value) inpSec.value = meliSecret;
   const uriEl = document.getElementById('meli-redirect-uri');
   if (uriEl && !uriEl.textContent) uriEl.textContent = window.location.origin + window.location.pathname;
+  _updateMeliConnectionBanner();
+}
+
+// Banner persistente que aparece en la app cuando hay cuentas desconectadas o sin señal
+function _updateMeliConnectionBanner(silentFailedAccts = []) {
+  const banner = document.getElementById('meli-conn-banner');
+  if (!banner) return;
+  const disc = ['capi', 'enano'].filter(a => !meliTokens[a]);
+  if (disc.length === 0 && silentFailedAccts.length === 0) {
+    banner.className = 'alert-banner';
+    banner.textContent = '';
+    return;
+  }
+  if (disc.length > 0) {
+    const names = disc.map(a => a.toUpperCase()).join(' y ');
+    const plural = disc.length > 1;
+    banner.className = 'alert-banner show warning';
+    banner.innerHTML = `⚠️ MELI ${names} desconectada${plural ? 's' : ''} — `
+      + `<span style="text-decoration:underline;cursor:pointer" onclick="document.getElementById('popup-meli')?.click()">abrí Ajustes MELI</span> para reconectar`;
+  } else {
+    const names = silentFailedAccts.map(a => a.toUpperCase()).join(' y ');
+    banner.className = 'alert-banner show warning';
+    banner.textContent = `⚠️ MELI ${names} sin señal — reintentando automáticamente`;
+  }
 }
 function _setStatusEl(elId, ac, label) {
   const el = document.getElementById(elId);
   if (!el) return;
-  if (ac && Date.now() < ac.expiresAt) {
-    const mins = Math.round((ac.expiresAt - Date.now()) / 60000);
-    const resta = mins < 60 ? `${mins} min` : `${Math.round(mins/60)}h`;
-    el.textContent = `✓ Conectado — renueva en ${resta}`;
-    el.className = 'meli-conn-status connected';
-  } else if (ac?.refreshToken) {
-    el.textContent = '↻ Renovando token...';
+  if (ac && (ac.token || ac.refreshToken)) {
+    el.textContent = '✓ Conectado';
     el.className = 'meli-conn-status connected';
   } else {
     el.textContent = 'No conectado';
@@ -709,11 +962,11 @@ window.meliSaveAppId = function() {
   const inp = document.getElementById('meli-app-id-input');
   const val = inp?.value?.trim();
   if (!val) { toast('Ingresá el App ID'); return; }
-  meliAppId = val; _meliSaveConfig(); toast('App ID guardado ✓');
+  meliAppId = val; _meliSaveMeta(); toast('App ID guardado ✓');
 };
 window.meliSaveSecret = function() {
   const inp = document.getElementById('meli-secret-input');
   const val = inp?.value?.trim();
   if (!val) { toast('Ingresá el Secret Key'); return; }
-  meliSecret = val; _meliSaveConfig(); toast('Secret Key guardado ✓');
+  meliSecret = val; _meliSaveMeta(); toast('Secret Key guardado ✓');
 };

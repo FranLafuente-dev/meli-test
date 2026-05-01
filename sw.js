@@ -1,5 +1,5 @@
-// FullSports SW v22 — network first + cache fallback para offline
-const CACHE = 'fs-v22';
+// FullSports SW v23 — network first + cache fallback + notificationclick
+const CACHE = 'fs-v23';
 
 // Archivos del app shell a pre-cachear
 const SHELL = ['./', './css/main.css', './js/app.js', './js/flex-zones.js', './manifest.json'];
@@ -24,6 +24,18 @@ self.addEventListener('activate', e => {
     )
   );
   self.clients.claim();
+});
+
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      for (const client of list) {
+        if (client.url.includes('fullsports-v2') && 'focus' in client) return client.focus();
+      }
+      if (clients.openWindow) return clients.openWindow('/fullsports-v2/');
+    })
+  );
 });
 
 self.addEventListener('fetch', e => {
