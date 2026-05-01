@@ -42,6 +42,7 @@ let curView = 'pedidos', pedidosTab = 'preparar', corteCuenta = 'capi', flexFilt
 let pedidosSearch = '';
 let _prodSortTs = 0;
 let expandFlexPeriods = new Set();
+let expandFlexQuincenas = new Set();
 let editingId = null, curCuenta = 'capi', curEnvio = 'FLEX';
 let curProducto = null, formItems = [], formEnvio = null;
 let deliveryId = null, deliveryAction = 'edit';
@@ -950,15 +951,15 @@ function orderCard(o) {
   }
 
   // Acciones — eliminar disponible en todos los estados
-  let act='';
+  let act='', topAct='';
   if (o.status==='preparar') {
-    act=`<div class="card-act card-act-preparar">
-      <button class="btn btn-green btn-sm" onclick="acPreparado('${o.id}',this)">✓ Preparado</button>
-      <div class="card-act-sub">
-        <button class="btn ${o.etiqueta?'btn-tag-ok':'btn-ghost'} btn-sm" onclick="acEtiqueta('${o.id}')">${o.etiqueta?'✓ Etiqueta':'🏷 Etiqueta'}</button>
-        <button class="btn btn-ghost btn-sm" onclick="acEditar('${o.id}')">✏️</button>
-        <button class="btn btn-danger btn-sm" onclick="acEliminar('${o.id}')">🗑</button>
-      </div>
+    topAct=`<div class="card-top-act">
+      <button class="card-icon-btn" onclick="event.stopPropagation();acEditar('${o.id}')">✏️</button>
+      <button class="card-icon-btn danger" onclick="event.stopPropagation();acEliminar('${o.id}')">🗑</button>
+    </div>`;
+    act=`<div class="card-act-preparar-row">
+      <button class="btn btn-green btn-sm" style="flex:1" onclick="acPreparado('${o.id}',this)">✓ Preparado</button>
+      <button class="btn-etiqueta${o.etiqueta?' active':''}" onclick="acEtiqueta('${o.id}')" title="${o.etiqueta?'Etiqueta lista':'Poner etiqueta'}">${o.etiqueta?`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`:''}</button>
     </div>`;
   } else if (o.status==='pendiente') {
     act=`<div class="card-act">
@@ -980,7 +981,21 @@ function orderCard(o) {
   }
 
   const meliRef = o.meliOrderId ? `<span class="order-meli-ref">#${o.meliOrderId}</span>` : '';
-  return `<div class="order-card${['preparar','pendiente'].includes(o.status)&&o.tipoEnvio==='FLEX'?' flex-active':''}" data-oid="${o.id}">
+  const flexCls = ['preparar','pendiente'].includes(o.status)&&o.tipoEnvio==='FLEX'?' flex-active':'';
+  if (o.status==='preparar') {
+    return `<div class="order-card${flexCls}" data-oid="${o.id}">
+      <div class="order-header-wrap">
+        <div style="flex:1;min-width:0">
+          <div class="order-header">${cb}${eb}${sc}${cd}${meliRef}</div>
+          <div class="order-name">${o.nombreComprador}</div>
+        </div>
+        ${topAct}
+      </div>
+      <div class="order-items">${fmtItemsShort(o.items)}</div>
+      ${fechaLine}${iibb}${monto}${act}
+    </div>`;
+  }
+  return `<div class="order-card${flexCls}" data-oid="${o.id}">
     <div class="order-header">${cb}${eb}${sc}${cd}${meliRef}</div>
     <div class="order-name">${o.nombreComprador}</div>
     <div class="order-items">${fmtItemsShort(o.items)}</div>
@@ -1968,52 +1983,70 @@ function renderCorteFlexBody() {
     // Auto-expandir el mes más reciente si no hay nada expandido aún
     if (expandFlexPeriods.size === 0 && monthKeys.length > 0) expandFlexPeriods.add(monthKeys[0]);
 
-    html += `<div class="section-title" style="margin-top:4px">Historial de quincenas</div>`;
+    const histCapiT  = flexPeriods.reduce((s,p)=>s+(p.capi?.total||0),0);
+    const histEnanoT = flexPeriods.reduce((s,p)=>s+(p.enano?.total||0),0);
+    html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;margin-bottom:4px;gap:8px">
+      <div class="section-title" style="margin:0">Historial de quincenas</div>
+      <div style="display:flex;gap:4px">
+        <button class="hist-filter-btn${!flexFilter?' active':''}" onclick="setFlexFilter(null)">Todos</button>
+        <button class="hist-filter-btn${flexFilter==='capi'?' active':''}" onclick="setFlexFilter('capi')">CAPI</button>
+        <button class="hist-filter-btn${flexFilter==='enano'?' active':''}" onclick="setFlexFilter('enano')">ENANO</button>
+      </div>
+    </div>`;
     monthKeys.forEach(mk => {
       const { label: mLabel, periods: mPers } = porMes[mk];
       const mCapiT  = mPers.reduce((s,p)=>s+(p.capi?.total||0),0);
       const mEnanoT = mPers.reduce((s,p)=>s+(p.enano?.total||0),0);
+      // Calcular totales filtrados para el mes
+      const mFilterT = flexFilter==='capi' ? mCapiT : flexFilter==='enano' ? mEnanoT : mCapiT+mEnanoT;
       const expanded = expandFlexPeriods.has(mk);
       html += `<div class="card flex-period-card">
         <div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;gap:12px" onclick="toggleFlexMonth('${mk}')">
           <div style="flex:1;min-width:0">
-            <div style="font-weight:700;font-size:15px">${mLabel}</div>
-            <div style="font-size:12px;color:var(--text-3)">${mPers.length} quincena${mPers.length>1?'s':''} · Total $${fmt(mCapiT+mEnanoT)}</div>
+            <div style="font-weight:700;font-size:15px;letter-spacing:-0.2px">${mLabel}</div>
+            <div style="font-size:12px;color:var(--text-3)">${mPers.length} quincena${mPers.length>1?'s':''} · $${fmt(mFilterT)}</div>
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0">
-            <div style="font-size:12px;color:var(--blue);font-weight:600">C $${fmt(mCapiT)}</div>
-            <div style="font-size:12px;color:var(--purple);font-weight:600">E $${fmt(mEnanoT)}</div>
+            ${!flexFilter||flexFilter==='capi'?`<div style="font-size:12px;color:var(--blue);font-weight:600">C $${fmt(mCapiT)}</div>`:''}
+            ${!flexFilter||flexFilter==='enano'?`<div style="font-size:12px;color:var(--purple);font-weight:600">E $${fmt(mEnanoT)}</div>`:''}
           </div>
           <div style="color:var(--text-3);font-size:12px;transition:transform 0.2s;transform:rotate(${expanded?180:0}deg)">▼</div>
         </div>
         ${expanded ? `<div class="flex-period-body" style="padding:0 16px 12px">
-          ${mPers.sort((a,b)=>b.half-a.half).map(p=>`
-            <div style="padding:10px 0;border-top:1px solid var(--sep)">
-              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          ${mPers.sort((a,b)=>b.half-a.half).map(p=>{
+            const qExpanded = expandFlexQuincenas.has(p.id);
+            const allQOrders = [...(p.capi?.orders||[]),...(p.enano?.orders||[])];
+            const filtQOrders = flexFilter ? allQOrders.filter(o=>o.cuenta===flexFilter) : allQOrders;
+            const qTotal = flexFilter==='capi'?(p.capi?.total||0):flexFilter==='enano'?(p.enano?.total||0):(p.capi?.total||0)+(p.enano?.total||0);
+            return `<div style="border-top:1px solid var(--sep)">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 0;cursor:pointer" onclick="event.stopPropagation();toggleFlexQuincena('${p.id}')">
                 <div style="flex:1;min-width:0">
                   <div style="font-weight:700;font-size:14px">${p.label}</div>
-                  <div style="font-size:11px;color:var(--text-3)">Cerrado ${p.closedAt} · C $${fmt(p.capi?.total||0)} · E $${fmt(p.enano?.total||0)}</div>
+                  <div style="font-size:11px;color:var(--text-3)">Cerrado ${p.closedAt} · $${fmt(qTotal)}</div>
                 </div>
-                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-                  <button onclick="event.stopPropagation();downloadFlexPeriodPDF('${p.id}')" class="btn-circle-icon" title="PDF" style="width:34px;height:34px;font-size:14px">📄</button>
-                  <button onclick="event.stopPropagation();eliminarPeriodo('${p.id}')" class="btn-circle-icon" title="Eliminar" style="width:34px;height:34px;font-size:14px;background:var(--red-light);border-color:rgba(255,59,48,0.3)">🗑</button>
+                <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+                  <button onclick="event.stopPropagation();downloadFlexPeriodPDF('${p.id}')" class="btn-circle-icon" title="PDF" style="width:30px;height:30px;font-size:13px">📄</button>
+                  <button onclick="event.stopPropagation();eliminarPeriodo('${p.id}')" class="btn-circle-icon" title="Eliminar" style="width:30px;height:30px;font-size:13px;background:var(--red-light);border-color:rgba(255,59,48,0.3)">🗑</button>
+                  <div style="color:var(--text-3);font-size:11px;transition:transform 0.2s;transform:rotate(${qExpanded?180:0}deg);margin-left:2px">▼</div>
                 </div>
               </div>
-              ${(p.capi?.orders||[]).length+(p.enano?.orders||[]).length > 0 ? `
-                <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px">
-                  ${[...(p.capi?.orders||[]),...(p.enano?.orders||[])].sort((a,b)=>(b.despachadoAt||0)-(a.despachadoAt||0)).map(o=>{
-                    const fecha = o.despachadoAt ? `${new Date(o.despachadoAt).getDate()}/${new Date(o.despachadoAt).getMonth()+1}` : '';
-                    return `<div class="flex-order-row">
-                      <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">
-                        <span class="badge badge-${o.cuenta}" style="font-size:9px;flex-shrink:0">${o.cuenta.toUpperCase()}</span>
-                        <span style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.nombre}</span>
-                        ${fecha?`<span style="font-size:11px;color:var(--text-3);flex-shrink:0">${fecha}</span>`:''}
-                      </div>
-                      <div style="font-size:12px;font-weight:700;color:var(--red);flex-shrink:0">−$${fmt(o.flexImporte)}</div>
-                    </div>`;
-                  }).join('')}
-                </div>` : `<p class="hint-text" style="margin-top:6px">Sin detalle guardado</p>`}
-            </div>`).join('')}
+              ${qExpanded ? `<div style="padding-bottom:8px;display:flex;flex-direction:column;gap:4px">
+                ${filtQOrders.length
+                  ? filtQOrders.sort((a,b)=>(b.despachadoAt||0)-(a.despachadoAt||0)).map(o=>{
+                      const fecha = o.despachadoAt ? `${new Date(o.despachadoAt).getDate()}/${new Date(o.despachadoAt).getMonth()+1}` : '';
+                      return `<div class="flex-order-row">
+                        <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">
+                          <span class="badge badge-${o.cuenta}" style="font-size:9px;flex-shrink:0">${o.cuenta.toUpperCase()}</span>
+                          <span style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.nombre}</span>
+                          ${fecha?`<span style="font-size:11px;color:var(--text-3);flex-shrink:0">${fecha}</span>`:''}
+                        </div>
+                        <div style="font-size:12px;font-weight:700;color:var(--red);flex-shrink:0">−$${fmt(o.flexImporte)}</div>
+                      </div>`;
+                    }).join('')
+                  : `<p class="hint-text">${flexFilter?`Sin envíos de ${flexFilter.toUpperCase()} en esta quincena`:'Sin detalle guardado'}</p>`}
+              </div>` : ''}
+            </div>`;
+          }).join('')}
         </div>` : ''}
       </div>`;
     });
@@ -2028,6 +2061,10 @@ function renderCorteFlexBody() {
 
 window.toggleFlexMonth = mk => {
   expandFlexPeriods.has(mk) ? expandFlexPeriods.delete(mk) : expandFlexPeriods.add(mk);
+  renderCorte();
+};
+window.toggleFlexQuincena = pid => {
+  expandFlexQuincenas.has(pid) ? expandFlexQuincenas.delete(pid) : expandFlexQuincenas.add(pid);
   renderCorte();
 };
 

@@ -1334,3 +1334,46 @@ input:-webkit-autofill:focus {
 }
 .prep-sort-link:active { color: var(--text-2); }
 .prep-sort-link.active { color: var(--teal); }
+
+/* ── ORDER CARD — preparar top-actions ───────────────────────────────────── */
+.order-header-wrap { display: flex; align-items: flex-start; gap: 8px; }
+.card-top-act { display: flex; gap: 4px; flex-shrink: 0; margin-top: 1px; }
+.card-icon-btn {
+  width: 30px; height: 30px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--gray-light);
+  color: var(--text-2); cursor: pointer; font-size: 14px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.12s, transform 0.1s var(--spring);
+  font-family: inherit;
+}
+.card-icon-btn:active { transform: scale(0.84); background: var(--border); }
+.card-icon-btn.danger { background: var(--red-light); color: var(--red); border-color: rgba(255,59,48,0.20); }
+.card-icon-btn.danger:active { background: rgba(255,59,48,0.25); }
+
+/* ── ETIQUETA CHECKBOX ───────────────────────────────────────────────────── */
+.card-act-preparar-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.btn-etiqueta {
+  width: 42px; height: 42px; border-radius: 10px; flex-shrink: 0;
+  border: 2px solid var(--border-hi); background: var(--card);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s var(--spring);
+  color: transparent; font-size: 0;
+}
+.btn-etiqueta.active {
+  background: var(--teal-light); border-color: var(--teal);
+  color: var(--teal);
+}
+.btn-etiqueta:active { transform: scale(0.86); }
+
+/* ── HISTORIAL FLEX — filtro vendedor ────────────────────────────────────── */
+.hist-filter-btn {
+  padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  border: 1px solid var(--border); background: var(--card);
+  color: var(--text-3); cursor: pointer; font-family: inherit;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  letter-spacing: 0.2px;
+}
+.hist-filter-btn.active {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.hist-filter-btn:active { opacity: 0.80; }
