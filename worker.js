@@ -48,7 +48,7 @@ async function getValidToken(kv, account) {
   const gotLock = await tryAcquireLock(kv, account);
   if (!gotLock) {
     // Otra instancia ya está refrescando — esperar y devolver lo que guardó
-    await new Promise(r => setTimeout(r, 3500));
+    await new Promise(r => setTimeout(r, 7000));
     const fresh = await kvGet(kv, `token:${account}`);
     if (fresh && (fresh.expiresAt || 0) > Date.now() + 60000) {
       return { ok: true, token: fresh.token, expiresAt: fresh.expiresAt };
@@ -93,7 +93,7 @@ async function getValidToken(kv, account) {
       refreshToken: data.refresh_token || stored.refreshToken,
       expiresAt:    Date.now() + (data.expires_in * 1000) - 120000,
     };
-    await kvPut(kv, `token:${account}`, newToken, { expirationTtl: data.expires_in + 600 });
+    await kvPut(kv, `token:${account}`, newToken, { expirationTtl: 2592000 }); // 30 días — refresh_token dura meses
     return { ok: true, token: newToken.token, expiresAt: newToken.expiresAt, refreshToken: newToken.refreshToken };
   } finally {
     await releaseLock(kv, account);
@@ -133,7 +133,7 @@ export default {
         refreshToken: body.refreshToken,
         expiresAt:    body.expiresAt || (Date.now() + 21480000),
       };
-      await kvPut(kv, `token:${body.account}`, tokenData, { expirationTtl: 22080 });
+      await kvPut(kv, `token:${body.account}`, tokenData, { expirationTtl: 2592000 }); // 30 días
       if (body.appId) {
         const cfg = await kvGet(kv, 'config') || {};
         await kvPut(kv, 'config', { appId: body.appId, secret: body.secret || cfg.secret || null });
