@@ -1015,8 +1015,12 @@ function fmtItemsShort(items) {
   if (!items||!items.length) return '';
   const s=sortIt(items);
   if (s.length===1) return `${s[0].producto} ${displayTalle(s[0].talle)}`;
-  const g={}; s.forEach(i=>{const k=`${i.producto} ${displayTalle(i.talle)}`;g[k]=(g[k]||0)+1;});
-  return `${s.length} pares — ${Object.entries(g).map(([k,q])=>q>1?`${k}×${q}`:k).join(' · ')}`;
+  const footwear=s.filter(i=>!PRODUCTOS_FIJO[i.producto]);
+  const fixed=s.filter(i=>!!PRODUCTOS_FIJO[i.producto]);
+  const fmtGrp=arr=>{const g={};arr.forEach(i=>{const k=`${i.producto} ${displayTalle(i.talle)}`;g[k]=(g[k]||0)+1;});return Object.entries(g).map(([k,q])=>q>1?`${k}×${q}`:k).join(' · ');};
+  if(!footwear.length)return fmtGrp(fixed);
+  if(!fixed.length)return`${footwear.length} pares — ${fmtGrp(footwear)}`;
+  return`${footwear.length} pares — ${fmtGrp(footwear)} · ${fmtGrp(fixed)}`;
 }
 function displayTalle(t) {
   if (t === 'U') return 'Único';
@@ -1782,24 +1786,24 @@ function renderDepCorte() {
 }
 
 function textoCapi(pend) {
-  let tot=0; const L=['Ventas Meli capi'];
+  let tot=0; const L=['*Ventas Meli capi*'];
   pend.forEach((o,i)=>{
     let m;
     if (o.tipoEnvio==='FLEX'&&o.importeVenta) {
-      m=`importe venta $${fmt(o.importeVenta)} menos envio FLEX $${fmt(o.flexImporte)} se acredito $${fmt(o.importeNeto)}`;
+      m=`importe venta $${fmt(o.importeVenta)} *menos envio FLEX $${fmt(o.flexImporte)}* se acredito $${fmt(o.importeNeto)}`;
     } else {
       m=`se acredito $${fmt(o.importeAcreditado)}`;
     }
     L.push(`${i+1}. ${o.nombreComprador} - ${fmtItemsCorte(o.items)} - ${m}`); tot+=o.importeAcreditado||0;
   });
-  L.push('',`Total acreditado a mp capi $${fmt(Math.round(tot/100)*100)}`); return L.join('\n');
+  L.push('',`*Total acreditado a mp capi $${fmt(Math.round(tot/100)*100)}*`); return L.join('\n');
 }
 function textoEnano(pend) {
-  let tot=0; const L=['Ventas meli enano'];
+  let tot=0; const L=['*Ventas meli enano*'];
   pend.forEach((o,i)=>{
     const iibb=o.provincia&&o.iibb?` (${o.provincia} IIBB ya descontado $${fmtDec(o.iibb)})`:'';
     const m=o.tipoEnvio==='FLEX'&&o.importeVenta
-      ?`importe venta $${fmt(o.importeVenta)} menos *ENVIO FLEX $${fmt(o.flexImporte)}* total sin envío $${fmt(o.importeNeto)}`
+      ?`importe venta $${fmt(o.importeVenta)} *menos ENVIO FLEX $${fmt(o.flexImporte)}* total sin envío $${fmt(o.importeNeto)}`
       :`se acredito $${fmt(o.importeAcreditado)}`;
     L.push(`${i+1}. ${o.nombreComprador}${iibb} - ${fmtItemsCorte(o.items)} - ${m}`); tot+=o.importeAcreditado||0;
   });
@@ -1807,17 +1811,21 @@ function textoEnano(pend) {
 }
 function textoCostos(pend,c) {
   let e=0,n=0; pend.forEach(o=>(o.items||[]).forEach(i=>TALLES_ESP.includes(i.talle)?e++:n++));
-  const L=[`Costo ${c.toUpperCase()}`];
+  const L=[`*Costos ${c.toUpperCase()}*`];
   if(e>0)L.push(`${e} cat especiales $${fmt(COSTO_ESP)}`);
   if(n>0)L.push(`${n} cat comunes $${fmt(COSTO_COMUN)}`);
-  L.push('',`Total costos $${fmt(e*COSTO_ESP+n*COSTO_COMUN)}`); return L.join('\n');
+  L.push('',`*Total costos $${fmt(e*COSTO_ESP+n*COSTO_COMUN)}*`); return L.join('\n');
 }
 function fmtItemsCorte(items) {
   if(!items||!items.length)return'';
   const s=sortIt(items);
   if(s.length===1)return`${s[0].producto.toLowerCase()} ${displayTalle(s[0].talle)}`;
-  const g={}; s.forEach(i=>{const k=`${i.producto} ${displayTalle(i.talle)}`;g[k]=(g[k]||0)+1;});
-  return`${s.length} pares (${Object.entries(g).map(([k,q])=>q>1?`${k} x${q}`:k).join(' - ')})`;
+  const footwear=s.filter(i=>!PRODUCTOS_FIJO[i.producto]);
+  const fixed=s.filter(i=>!!PRODUCTOS_FIJO[i.producto]);
+  const fmtGrp=arr=>{const g={};arr.forEach(i=>{const k=`${i.producto} ${displayTalle(i.talle)}`;g[k]=(g[k]||0)+1;});return Object.entries(g).map(([k,q])=>q>1?`${k} x${q}`:k).join(' - ');};
+  if(!footwear.length)return fmtGrp(fixed);
+  if(!fixed.length)return`${footwear.length} pares (${fmtGrp(footwear)})`;
+  return`${footwear.length} pares (${fmtGrp(footwear)}) + ${fmtGrp(fixed)}`;
 }
 function renderWA(t){return t.replace(/\*(.*?)\*/g,'<b>$1</b>').replace(/\n/g,'<br>');}
 function esc(t){return JSON.stringify(t).replace(/"/g,'&quot;');}
@@ -2041,34 +2049,51 @@ function renderCorteFlexBody() {
         ${expanded ? `<div class="flex-period-body" style="padding:0 16px 12px">
           ${mPers.sort((a,b)=>b.half-a.half).map(p=>{
             const qExpanded = expandFlexQuincenas.has(p.id);
-            const allQOrders = [...(p.capi?.orders||[]),...(p.enano?.orders||[])];
+            const capiOrd  = (p.capi?.orders||[]).map((o,i)=>({...o,_idx:i}));
+            const enanoOrd = (p.enano?.orders||[]).map((o,i)=>({...o,_idx:i}));
+            const allQOrders = [...capiOrd,...enanoOrd];
             const filtQOrders = flexFilter ? allQOrders.filter(o=>o.cuenta===flexFilter) : allQOrders;
-            const qTotal = flexFilter==='capi'?(p.capi?.total||0):flexFilter==='enano'?(p.enano?.total||0):(p.capi?.total||0)+(p.enano?.total||0);
+            const qCapiT  = p.capi?.total||0;
+            const qEnanoT = p.enano?.total||0;
+            const qTotal  = qCapiT + qEnanoT;
             return `<div style="border-top:1px solid var(--sep)">
               <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 0;cursor:pointer" onclick="event.stopPropagation();toggleFlexQuincena('${p.id}')">
                 <div style="flex:1;min-width:0">
                   <div style="font-weight:700;font-size:14px">${p.label}</div>
-                  <div style="font-size:11px;color:var(--text-3)">Cerrado ${p.closedAt} · $${fmt(qTotal)}</div>
+                  <div style="font-size:11px;color:var(--text-3);margin-top:1px">Cerrado ${p.closedAt}</div>
+                  <div style="display:flex;gap:8px;margin-top:3px;flex-wrap:wrap">
+                    <span style="font-size:11px;color:var(--blue);font-weight:600">C $${fmt(qCapiT)}</span>
+                    <span style="font-size:11px;color:var(--purple);font-weight:600">E $${fmt(qEnanoT)}</span>
+                    <span style="font-size:11px;font-weight:700">= $${fmt(qTotal)}</span>
+                  </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
                   <button onclick="event.stopPropagation();downloadFlexPeriodPDF('${p.id}')" class="btn-circle-icon" title="PDF" style="width:30px;height:30px;font-size:13px">📄</button>
-                  <button onclick="event.stopPropagation();eliminarPeriodo('${p.id}')" class="btn-circle-icon" title="Eliminar" style="width:30px;height:30px;font-size:13px;background:var(--red-light);border-color:rgba(255,59,48,0.3)">🗑</button>
+                  <button onclick="event.stopPropagation();eliminarPeriodo('${p.id}')" class="btn-circle-icon" title="Eliminar quincena" style="width:30px;height:30px;font-size:13px;background:var(--red-light);border-color:rgba(255,59,48,0.3)">🗑</button>
                   <div style="color:var(--text-3);font-size:11px;transition:transform 0.2s;transform:rotate(${qExpanded?180:0}deg);margin-left:2px">▼</div>
                 </div>
               </div>
-              ${qExpanded ? `<div style="padding-bottom:8px;display:flex;flex-direction:column;gap:4px">
+              ${qExpanded ? `<div style="padding-bottom:8px;display:flex;flex-direction:column;gap:2px">
                 ${filtQOrders.length
-                  ? filtQOrders.sort((a,b)=>(b.despachadoAt||0)-(a.despachadoAt||0)).map(o=>{
-                      const fecha = o.despachadoAt ? `${new Date(o.despachadoAt).getDate()}/${new Date(o.despachadoAt).getMonth()+1}` : '';
-                      return `<div class="flex-order-row">
-                        <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">
-                          <span class="badge badge-${o.cuenta}" style="font-size:9px;flex-shrink:0">${o.cuenta.toUpperCase()}</span>
-                          <span style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.nombre}</span>
-                          ${fecha?`<span style="font-size:11px;color:var(--text-3);flex-shrink:0">${fecha}</span>`:''}
-                        </div>
-                        <div style="font-size:12px;font-weight:700;color:var(--red);flex-shrink:0">−$${fmt(o.flexImporte)}</div>
-                      </div>`;
-                    }).join('')
+                  ? filtQOrders
+                      .sort((a,b)=>{const d=(a.despachadoAt||0)-(b.despachadoAt||0);return d!==0?d:(a.cuenta||'').localeCompare(b.cuenta||'');})
+                      .map(o=>{
+                        const dt = o.despachadoAt ? new Date(o.despachadoAt) : null;
+                        const fecha = dt ? `${dt.getDate()}/${dt.getMonth()+1}` : '';
+                        return `<div class="flex-order-row" style="padding:6px 0;gap:6px">
+                          <div style="flex:1;min-width:0">
+                            <div style="display:flex;align-items:center;gap:5px">
+                              <span class="badge badge-${o.cuenta}" style="font-size:9px;flex-shrink:0">${o.cuenta.toUpperCase()}</span>
+                              ${fecha?`<span style="font-size:10px;color:var(--text-3);flex-shrink:0">${fecha}</span>`:''}
+                              <span style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.nombre}</span>
+                            </div>
+                            ${o.localidad?`<div style="font-size:10px;color:var(--text-3);margin-top:1px;padding-left:2px">${o.localidad}${o.zona?` · ${o.zona}`:''}</div>`:''}
+                          </div>
+                          <div style="font-size:12px;font-weight:700;color:var(--red);flex-shrink:0">−$${fmt(o.flexImporte)}</div>
+                          <button onclick="event.stopPropagation();editFlexRecord('${p.id}','${encodeURIComponent(o.cuenta)}',${o._idx})" class="btn-circle-icon" title="Editar importe" style="width:26px;height:26px;font-size:11px;flex-shrink:0">✏️</button>
+                          <button onclick="event.stopPropagation();deleteFlexRecord('${p.id}','${encodeURIComponent(o.cuenta)}',${o._idx})" class="btn-circle-icon" title="Eliminar registro" style="width:26px;height:26px;font-size:11px;flex-shrink:0;background:var(--red-light);border-color:rgba(255,59,48,0.3)">🗑</button>
+                        </div>`;
+                      }).join('')
                   : `<p class="hint-text">${flexFilter?`Sin envíos de ${flexFilter.toUpperCase()} en esta quincena`:'Sin detalle guardado'}</p>`}
               </div>` : ''}
             </div>`;
@@ -2192,7 +2217,45 @@ window.downloadFlexPeriodPDF = pid => {
   w.document.close();
 };
 
-window.deleteFlexRecord = async (id, isManual) => {
+window.editFlexRecord = async (periodId, cuentaEnc, idx) => {
+  const cuenta = decodeURIComponent(cuentaEnc);
+  const p = flexPeriods.find(x => x.id === periodId);
+  if (!p || !p[cuenta]?.orders[idx]) return;
+  const rec = p[cuenta].orders[idx];
+  const v = await showInputDialog(`Importe envío — ${rec.nombre}`, rec.flexImporte);
+  if (v === null) return;
+  const n = parseInt(v);
+  if (isNaN(n) || n <= 0) { toast('⚠️ Importe inválido'); return; }
+  p[cuenta].orders[idx].flexImporte = n;
+  p[cuenta].total = p[cuenta].orders.reduce((s, o) => s + (o.flexImporte || 0), 0);
+  saveFlexPeriods();
+  await db.collection('meta').doc('flexPeriods').set({ periods: flexPeriods }).catch(() => {});
+  renderCorte();
+  toast('Importe actualizado ✓');
+};
+
+window.deleteFlexRecord = async (id, isManualOrCuenta, idx) => {
+  // 3-arg form: registro de quincena cerrada
+  if (idx !== undefined) {
+    const cuenta = decodeURIComponent(isManualOrCuenta);
+    const p = flexPeriods.find(x => x.id === id);
+    if (!p || !p[cuenta]?.orders[idx]) return;
+    const rec = p[cuenta].orders[idx];
+    const ok = await showConfirm(`¿Eliminar envío de "${rec.nombre}"?`, {
+      icon: '🗑', confirmText: 'Eliminar', confirmClass: 'btn-danger', cancelText: 'Cancelar',
+    });
+    if (!ok) return;
+    p[cuenta].orders.splice(idx, 1);
+    p[cuenta].total = p[cuenta].orders.reduce((s, o) => s + (o.flexImporte || 0), 0);
+    p[cuenta].count = p[cuenta].orders.length;
+    saveFlexPeriods();
+    await db.collection('meta').doc('flexPeriods').set({ periods: flexPeriods }).catch(() => {});
+    renderCorte();
+    toast('Registro eliminado ✓');
+    return;
+  }
+  // 2-arg form: registro del período abierto actual
+  const isManual = isManualOrCuenta;
   const rec = isManual ? flexManualRecords.find(r => r.id === id) : null;
   const nombre = rec?.nombre || '';
   const ok = await showConfirm('¿Eliminar este registro FLEX?', {
@@ -2508,9 +2571,12 @@ window.editSt=async k=>{
 };
 function upRowCls(el,v){const r=el.closest('.stock-row');if(r)r.className=`stock-row ${v<0?'negativo':v===0?'cero':v<=2?'bajo':'ok'}`;}
 window.doSaveStock=async()=>{
+  const btn=document.getElementById('stock-fab');
+  if(btn){btn.disabled=true;btn.innerHTML='⏳ <span class="stock-fab-text">Guardando…</span>';}
   saveStock();
   try{ await db.collection('meta').doc('stock').set(stock); toast('Stock guardado ✓'); }
   catch(e){ toast('⚠️ Error al guardar stock — revisá la conexión'); }
+  finally{ if(btn){btn.disabled=false;btn.innerHTML='💾 <span class="stock-fab-text">Guardar stock</span>';} }
 };
 
 // ─── CONFIG / ZONAS FLEX — Zona 1 → Partido → Localidades ────────────────────
