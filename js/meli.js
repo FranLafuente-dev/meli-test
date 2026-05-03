@@ -64,10 +64,10 @@ async function meliInit() {
   startMeliPolling();
   _meliSetupVisibilityWatch();
   if (meliTokens.capi || meliTokens.enano) syncMeli(false);
-  // Modal de alerta solo si la cuenta nunca fue conectada (sin refreshToken guardado).
-  // Un token expirado o un refresh fallido NO es motivo para pedir reconexión — se reintenta.
+  // Modal de alerta solo si el objeto de token es null del todo (cuenta nunca conectada).
+  // Cualquier token guardado (con o sin refreshToken) significa que hubo conexión previa.
   if (meliAppId) {
-    const disc = ['capi', 'enano'].filter(a => !meliTokens[a]?.refreshToken);
+    const disc = ['capi', 'enano'].filter(a => !meliTokens[a]);
     if (disc.length) _meliShowReconnectModal(disc);
   }
 }
