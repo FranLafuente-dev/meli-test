@@ -1689,8 +1689,15 @@ async function guardarVenta() {
       (base.items||[]).forEach(i=>{const k=`${i.producto}_${i.talle}`;ns[k]=(ns[k]||0)-1;});
       stock=ns; saveStock();
       db.collection('meta').doc('stock').set(ns).catch(()=>{});
+      // Marcar el pedido MELI como "en proceso de guardado" antes del await,
+      // para que syncMeli no lo vuelva a mostrar como pendiente si corre ahora
+      if (_meliId && typeof window.meliBeginSave === 'function') window.meliBeginSave(_meliId);
       const ref=await db.collection('orders').add(base);
-      orders.unshift({id:ref.id,...base}); saveOrders(); renderPedidos(); renderCorte();
+      // El onSnapshot dispara ANTES de que await resuelva (Firestore caché local).
+      // Solo agregar manualmente si el snapshot todavía no lo incluyó — evita duplicados.
+      if (!orders.find(o => o.id === ref.id)) {
+        orders.unshift({id:ref.id,...base}); saveOrders(); renderPedidos(); renderCorte();
+      }
       if (typeof meliMarkLoaded === 'function') meliMarkLoaded(_meliId);
       toast('Venta guardada ✓');
     }

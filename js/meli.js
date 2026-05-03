@@ -27,6 +27,8 @@ const _meliSyncFailedAccts = new Set();
 let _meliRetryTimer = null; // timer de auto-retry para fallas transitorias
 // Contador de refreshes fallidos consecutivos por cuenta (invalid_grant) — no borrar token hasta X fallos
 const _meliInvalidCount = { capi: 0, enano: 0 };
+// IDs de pedidos MELI que están siendo guardados ahora mismo (entre el add() y el onSnapshot)
+const _meliPendingSaves = new Set();
 
 // ─── ALERTA DESCONEXIÓN — notifica siempre, incluso en background ─────────────
 let _lastDisconnectNotifAt = 0;
@@ -599,8 +601,15 @@ async function _enrichFromShipment(orders) {
 
 // ─── FILTROS ──────────────────────────────────────────────────────────────────
 function _isMeliOrderLoaded(meliId) {
+  // También verificar el set de guardados en vuelo (entre add() y onSnapshot)
+  if (_meliPendingSaves.has(String(meliId))) return true;
   return orders.some(o => o.meliOrderId && String(o.meliOrderId) === String(meliId));
 }
+
+// Llamar antes de await add() para bloquear sugerencias mientras se guarda
+window.meliBeginSave = function(meliOrderId) {
+  if (meliOrderId) _meliPendingSaves.add(String(meliOrderId));
+};
 function _isMeliDispatched(order) {
   return ['shipped', 'delivered', 'not_delivered', 'cancelled'].includes(order.shipping?.status);
 }
