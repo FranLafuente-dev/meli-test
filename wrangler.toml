@@ -1,3 +1,7 @@
 name = "meli-test"
 main = "worker.js"
 compatibility_date = "2024-01-01"
+
+[[kv_namespaces]]
+binding = "MELI_TOKENS"
+id = "c5d913a712404651961290d27c0d50f9"

@@ -48,6 +48,9 @@ async function meliInit() {
 
   _meliLoadLocal();
   await _meliLoadFirestore();
+  // Registrar tokens existentes en el Worker (sube config + tokens al KV de Cloudflare)
+  // Esto garantiza que el Worker siempre tenga los tokens más recientes disponibles
+  _meliSyncToWorker();
   // Refresh inmediato si el access_token ya expiró (antes del primer sync)
   await Promise.all(['capi', 'enano'].map(async acct => {
     const ac = meliTokens[acct];
@@ -173,6 +176,36 @@ async function _meliSaveToken(acct) {
   // Silenciar error después de 3 intentos fallidos
 }
 
+// ─── SINCRONIZACIÓN CON WORKER (KV de Cloudflare) ────────────────────────────
+// Sube appId/secret y tokens actuales al Worker para que él maneje los refreshes
+function _meliSyncToWorker() {
+  if (!meliAppId) return;
+  // Subir config (fire-and-forget)
+  fetch(`${MELI_WORKER_BASE}/api/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ appId: meliAppId, secret: meliSecret || undefined }),
+  }).catch(() => {});
+  // Subir tokens existentes
+  for (const acct of ['capi', 'enano']) {
+    const ac = meliTokens[acct];
+    if (ac?.refreshToken) {
+      fetch(`${MELI_WORKER_BASE}/api/token/store`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          account:      acct,
+          token:        ac.token,
+          refreshToken: ac.refreshToken,
+          expiresAt:    ac.expiresAt,
+          appId:        meliAppId,
+          secret:       meliSecret || undefined,
+        }),
+      }).catch(() => {});
+    }
+  }
+}
+
 // Guarda solo App ID y Secret — merge:true para no tocar los tokens
 function _meliSaveMeta() {
   try { localStorage.setItem(LS_MELI_APPID,  meliAppId);  } catch(e) {}
@@ -287,6 +320,8 @@ async function _meliExchangeCode(account, code, verifier, redirectUri) {
     };
     _meliSaveToken(account);
     _meliSaveMeta();
+    // Registrar en el Worker para que todos los dispositivos encuentren el token nuevo
+    _meliSyncToWorkerAccount(account);
     localStorage.removeItem('meli_pkce_verifier');
     localStorage.removeItem('meli_pkce_account');
     updateMeliSettingsUI();
@@ -299,34 +334,57 @@ async function _meliExchangeCode(account, code, verifier, redirectUri) {
 }
 
 async function _meliRefreshToken(account) {
-  // Dedup: si ya hay un refresh en curso para esta cuenta, esperar ese resultado
+  // Dedup: si ya hay un refresh en curso en esta pestaña, esperar ese resultado
   if (_meliRefreshing[account]) return _meliRefreshing[account];
   const p = (async () => {
     const ac = meliTokens[account];
     if (!ac?.refreshToken) return false;
 
-    // Pre-check: leer Firestore ANTES de llamar al endpoint.
-    // Si otra pestaña/dispositivo ya renovó el token, adoptarlo sin gastar el refresh_token.
+    // ── PASO 1: pedir token válido al Worker ─────────────────────────────────
+    // El Worker usa KV con lock — garantiza que solo una instancia refresca
+    // aunque haya 3 dispositivos pidiendo al mismo tiempo.
     try {
-      const snap = await db.collection('meta').doc('meliConfig').get();
-      if (snap.exists) {
-        const fsToken = snap.data()[account];
-        // Adoptar si Firestore tiene un token más reciente que el local
-        if (fsToken?.refreshToken && (fsToken.expiresAt || 0) > (ac.expiresAt || 0) + 30000) {
-          meliTokens[account] = fsToken;
-          _meliSaveTokensLocal();
+      const res = await fetch(`${MELI_WORKER_BASE}/api/token/${account}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.token) {
+          meliTokens[account] = {
+            ...meliTokens[account],
+            token:     data.token,
+            expiresAt: data.expiresAt,
+            // Si el Worker refrescó, viene refreshToken nuevo → actualizar
+            ...(data.refreshToken ? { refreshToken: data.refreshToken } : {}),
+          };
+          await _meliSaveToken(account);
           updateMeliSettingsUI();
           return true;
         }
       }
-    } catch(e) {}
-
-    try {
-      // Verificar si el listener de Firestore actualizó el token mientras esperábamos
-      const acNow = meliTokens[account];
-      if (acNow !== ac && (acNow?.expiresAt || 0) > Date.now() + 60000) {
-        return true; // Firestore listener ya trajo el token nuevo — no gastar el refresh_token
+      // Worker dice no_token (KV vacío): registrar el token local y reintentar
+      if (res.status === 404 || res.status === 502) {
+        await _meliSyncToWorkerAccount(account);
+        const res2 = await fetch(`${MELI_WORKER_BASE}/api/token/${account}`);
+        if (res2.ok) {
+          const data2 = await res2.json();
+          if (data2?.token) {
+            meliTokens[account] = {
+              ...meliTokens[account],
+              token:     data2.token,
+              expiresAt: data2.expiresAt,
+              ...(data2.refreshToken ? { refreshToken: data2.refreshToken } : {}),
+            };
+            await _meliSaveToken(account);
+            updateMeliSettingsUI();
+            return true;
+          }
+        }
       }
+    } catch(e) {
+      // Worker no disponible → caer al refresh local
+    }
+
+    // ── PASO 2: fallback local (Worker caído / sin red) ───────────────────────
+    try {
       const params = {
         grant_type:    'refresh_token',
         client_id:     meliAppId,
@@ -340,24 +398,7 @@ async function _meliRefreshToken(account) {
       });
       const data = await res.json();
       if (!res.ok || !data.access_token) {
-        if (data.error === 'invalid_grant' || (data.message || '').toLowerCase().includes('invalid')) {
-          // Esperar 6s: da tiempo suficiente para que la otra instancia escriba en Firestore (hasta 3 reintentos × 1s)
-          await new Promise(r => setTimeout(r, 6000));
-          try {
-            const snap = await db.collection('meta').doc('meliConfig').get();
-            if (snap.exists) {
-              const fsToken = snap.data()[account];
-              if (fsToken?.refreshToken && (fsToken.expiresAt || 0) > Date.now() + 60000) {
-                meliTokens[account] = fsToken;
-                _meliSaveTokensLocal();
-                updateMeliSettingsUI();
-                return true;
-              }
-            }
-          } catch(e) {}
-          return 'invalid';
-        }
-        return false; // error HTTP transitorio — no borrar tokens
+        return data.error === 'invalid_grant' ? 'invalid' : false;
       }
       meliTokens[account] = {
         ...meliTokens[account],
@@ -365,13 +406,33 @@ async function _meliRefreshToken(account) {
         refreshToken: data.refresh_token || meliTokens[account]?.refreshToken || ac.refreshToken,
         expiresAt:    Date.now() + (data.expires_in * 1000) - 120000,
       };
-      await _meliSaveToken(account); // await para que Firestore se actualice antes de que otra instancia lo lea
+      await _meliSaveToken(account);
+      // Subir el nuevo token al Worker para que los otros dispositivos lo encuentren
+      _meliSyncToWorkerAccount(account);
       updateMeliSettingsUI();
       return true;
-    } catch(e) { return false; } // error de red → no borrar tokens
+    } catch(e) { return false; }
   })();
   _meliRefreshing[account] = p;
   try { return await p; } finally { _meliRefreshing[account] = null; }
+}
+
+// Sube el token de UNA cuenta al Worker (usado en bootstrap y post-refresh local)
+function _meliSyncToWorkerAccount(account) {
+  const ac = meliTokens[account];
+  if (!ac?.refreshToken) return Promise.resolve();
+  return fetch(`${MELI_WORKER_BASE}/api/token/store`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      account,
+      token:        ac.token,
+      refreshToken: ac.refreshToken,
+      expiresAt:    ac.expiresAt,
+      appId:        meliAppId,
+      secret:       meliSecret || undefined,
+    }),
+  }).catch(() => {});
 }
 
 // Obtener token válido (renueva automáticamente con refresh_token)
