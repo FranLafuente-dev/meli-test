@@ -901,7 +901,7 @@ function calcDep() {
   }));
   return Object.entries(g)
     .sort(([a],[b])=>{ const[aP,aT]=a.split('||'),[bP,bT]=b.split('||'); return aP!==bP?aP.localeCompare(bP):String(aT).localeCompare(String(bT)); })
-    .map(([k,qty])=>{ const[prod,talle]=k.split('||'); return {prod,talle,qty,queda:(stock[`${prod}_${talle}`]??0)-qty}; });
+    .map(([k,qty])=>{ const[prod,talle]=k.split('||'); return {prod,talle,qty,queda:stock[`${prod}_${talle}`]??0}; });
 }
 window.toggleDep = () => {
   const box=document.getElementById('dep-box'), btn=document.getElementById('btn-dep'); if (!box) return;
