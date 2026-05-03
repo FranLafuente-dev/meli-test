@@ -24,6 +24,7 @@ let meliAuthPopup   = null;
 const _meliRefreshing = {};
 // Cuentas que fallaron por error transitorio en el último sync (token presente pero sin señal)
 const _meliSyncFailedAccts = new Set();
+let _meliRetryTimer = null; // timer de auto-retry para fallas transitorias
 
 // ─── ALERTA DESCONEXIÓN — notifica siempre, incluso en background ─────────────
 let _lastDisconnectNotifAt = 0;
@@ -147,9 +148,10 @@ function _meliSaveTokensLocal() {
 }
 
 // Guarda UN SOLO token de cuenta — merge:true para no pisar el token de la otra cuenta
+// Retorna la promesa para poder await-earla en el refresh
 function _meliSaveToken(acct) {
   _meliSaveTokensLocal();
-  db.collection('meta').doc('meliConfig').set(
+  return db.collection('meta').doc('meliConfig').set(
     { [acct]: meliTokens[acct] || null },
     { merge: true }
   ).catch(() => {});
@@ -286,11 +288,28 @@ async function _meliRefreshToken(account) {
   const p = (async () => {
     const ac = meliTokens[account];
     if (!ac?.refreshToken) return false;
+
+    // Pre-check: leer Firestore ANTES de llamar al endpoint.
+    // Si otra pestaña/dispositivo ya renovó el token, adoptarlo sin gastar el refresh_token.
+    try {
+      const snap = await db.collection('meta').doc('meliConfig').get();
+      if (snap.exists) {
+        const fsToken = snap.data()[account];
+        // Adoptar si Firestore tiene un token más reciente que el local
+        if (fsToken?.refreshToken && (fsToken.expiresAt || 0) > (ac.expiresAt || 0) + 30000) {
+          meliTokens[account] = fsToken;
+          _meliSaveTokensLocal();
+          updateMeliSettingsUI();
+          return true;
+        }
+      }
+    } catch(e) {}
+
     try {
       const params = {
         grant_type:    'refresh_token',
         client_id:     meliAppId,
-        refresh_token: ac.refreshToken,
+        refresh_token: meliTokens[account]?.refreshToken || ac.refreshToken,
       };
       if (meliSecret) params.client_secret = meliSecret;
       const res = await fetch(`${MELI_WORKER_BASE}/api/token`, {
@@ -301,14 +320,13 @@ async function _meliRefreshToken(account) {
       const data = await res.json();
       if (!res.ok || !data.access_token) {
         if (data.error === 'invalid_grant' || (data.message || '').toLowerCase().includes('invalid')) {
-          // Antes de declarar el token muerto: re-leer Firestore.
-          // Otra pestaña/dispositivo puede haber renovado ya, invalidando nuestro refreshToken.
+          // Esperar 2.5s para que la escritura de Firestore de otra instancia propague
+          await new Promise(r => setTimeout(r, 2500));
           try {
             const snap = await db.collection('meta').doc('meliConfig').get();
             if (snap.exists) {
               const fsToken = snap.data()[account];
-              if (fsToken?.refreshToken && (fsToken.expiresAt || 0) > Date.now()) {
-                // Otra instancia ya renovó — adoptar ese token
+              if (fsToken?.refreshToken && (fsToken.expiresAt || 0) > Date.now() + 60000) {
                 meliTokens[account] = fsToken;
                 _meliSaveTokensLocal();
                 updateMeliSettingsUI();
@@ -321,12 +339,12 @@ async function _meliRefreshToken(account) {
         return false; // error HTTP transitorio — no borrar tokens
       }
       meliTokens[account] = {
-        ...ac,
+        ...meliTokens[account],
         token:        data.access_token,
-        refreshToken: data.refresh_token || ac.refreshToken,
+        refreshToken: data.refresh_token || meliTokens[account]?.refreshToken || ac.refreshToken,
         expiresAt:    Date.now() + (data.expires_in * 1000) - 120000,
       };
-      _meliSaveToken(account);
+      await _meliSaveToken(account); // await para que Firestore se actualice antes de que otra instancia lo lea
       updateMeliSettingsUI();
       return true;
     } catch(e) { return false; } // error de red → no borrar tokens
@@ -405,6 +423,7 @@ async function syncMeli(showToast = true) {
   if (syncBtn) syncBtn.classList.add('syncing');
   if (showToast) toast('Sincronizando MELI...');
   _meliSyncFailedAccts.clear();
+  if (_meliRetryTimer) { clearTimeout(_meliRetryTimer); _meliRetryTimer = null; }
 
   try {
     const [capiOrders, enanoOrders] = await Promise.all([
@@ -451,7 +470,15 @@ async function syncMeli(showToast = true) {
       if (showToast) toast(`⚠️ ${names} desconectada${disc.length > 1 ? 's' : ''}${pedPart}`);
     } else if (silentFailed.length) {
       const names = silentFailed.map(a => a.toUpperCase()).join(' y ');
-      if (showToast) toast(`⚠️ MELI ${names} sin señal — reintentando en 15 min`);
+      if (showToast) toast(`⚠️ MELI ${names} sin señal — reintentando en 3 min`);
+      // Auto-retry en 3 minutos sin necesitar que el usuario refresque la página
+      if (!_meliRetryTimer) {
+        _meliRetryTimer = setTimeout(() => {
+          _meliRetryTimer = null;
+          _meliSyncFailedAccts.clear();
+          syncMeli(false);
+        }, 3 * 60 * 1000);
+      }
     } else if (showToast) {
       toast(suggestions.length > 0
         ? `${suggestions.length} pedido${suggestions.length > 1 ? 's' : ''} nuevo${suggestions.length > 1 ? 's' : ''} en MELI ✓`
