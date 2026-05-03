@@ -120,21 +120,29 @@ async function _meliLoadFirestore() {
       const d = s.data();
       if (d.appId)  { meliAppId  = d.appId;  localStorage.setItem(LS_MELI_APPID,  d.appId);  }
       if (d.secret) { meliSecret = d.secret; localStorage.setItem(LS_MELI_SECRET, d.secret); }
+      const needsUpSync = [];
       for (const acct of ['capi', 'enano']) {
-        if (!(acct in d)) continue;
-        const fsToken    = d[acct] || null;
+        const fsToken    = (acct in d) ? (d[acct] || null) : undefined;
         const localToken = meliTokens[acct];
         if (!localToken) {
-          // Sin token local (navegador nuevo / localStorage vacío): cargar siempre desde Firestore
-          meliTokens[acct] = fsToken;
+          // Sin token local: cargar desde Firestore (puede ser null si nunca conectó)
+          meliTokens[acct] = fsToken ?? null;
         } else if (fsToken && (fsToken.expiresAt || 0) > (localToken.expiresAt || 0)) {
-          // Firestore tiene token más reciente: adoptar
+          // Firestore más reciente: adoptar
           meliTokens[acct] = fsToken;
+        } else if (localToken && (!fsToken || (localToken.expiresAt || 0) > (fsToken.expiresAt || 0) + 30000)) {
+          // Local más reciente que Firestore (write anterior falló): re-sincronizar hacia arriba
+          needsUpSync.push(acct);
         }
         // Si Firestore es null pero local tiene token: conservar local
-        // (protege contra race condition que borró Firestore)
       }
       _meliSaveTokensLocal();
+      // Subir tokens locales más nuevos a Firestore (sin await para no bloquear la carga)
+      if (needsUpSync.length) {
+        const upPayload = {};
+        needsUpSync.forEach(a => { upPayload[a] = meliTokens[a]; });
+        db.collection('meta').doc('meliConfig').set(upPayload, { merge: true }).catch(() => {});
+      }
     }
   } catch(e) {}
   try {
@@ -150,14 +158,19 @@ function _meliSaveTokensLocal() {
   try { localStorage.setItem(LS_MELI_TOKENS, JSON.stringify(meliTokens)); } catch(e) {}
 }
 
-// Guarda UN SOLO token de cuenta — merge:true para no pisar el token de la otra cuenta
-// Retorna la promesa para poder await-earla en el refresh
-function _meliSaveToken(acct) {
+// Guarda UN SOLO token de cuenta — reintenta hasta 3 veces para no perder el refresh_token nuevo
+async function _meliSaveToken(acct) {
   _meliSaveTokensLocal();
-  return db.collection('meta').doc('meliConfig').set(
-    { [acct]: meliTokens[acct] || null },
-    { merge: true }
-  ).catch(() => {});
+  const payload = { [acct]: meliTokens[acct] || null };
+  for (let i = 0; i < 3; i++) {
+    try {
+      await db.collection('meta').doc('meliConfig').set(payload, { merge: true });
+      return; // éxito
+    } catch(e) {
+      if (i < 2) await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+    }
+  }
+  // Silenciar error después de 3 intentos fallidos
 }
 
 // Guarda solo App ID y Secret — merge:true para no tocar los tokens
@@ -309,6 +322,11 @@ async function _meliRefreshToken(account) {
     } catch(e) {}
 
     try {
+      // Verificar si el listener de Firestore actualizó el token mientras esperábamos
+      const acNow = meliTokens[account];
+      if (acNow !== ac && (acNow?.expiresAt || 0) > Date.now() + 60000) {
+        return true; // Firestore listener ya trajo el token nuevo — no gastar el refresh_token
+      }
       const params = {
         grant_type:    'refresh_token',
         client_id:     meliAppId,
@@ -323,8 +341,8 @@ async function _meliRefreshToken(account) {
       const data = await res.json();
       if (!res.ok || !data.access_token) {
         if (data.error === 'invalid_grant' || (data.message || '').toLowerCase().includes('invalid')) {
-          // Esperar 2.5s para que la escritura de Firestore de otra instancia propague
-          await new Promise(r => setTimeout(r, 2500));
+          // Esperar 6s: da tiempo suficiente para que la otra instancia escriba en Firestore (hasta 3 reintentos × 1s)
+          await new Promise(r => setTimeout(r, 6000));
           try {
             const snap = await db.collection('meta').doc('meliConfig').get();
             if (snap.exists) {
