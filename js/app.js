@@ -2014,8 +2014,6 @@ function renderCorteFlexBody() {
       porMes[k].periods.push(p);
     });
     const monthKeys = Object.keys(porMes).sort((a,b)=>b.localeCompare(a));
-    // Auto-expandir el mes más reciente si no hay nada expandido aún
-    if (expandFlexPeriods.size === 0 && monthKeys.length > 0) expandFlexPeriods.add(monthKeys[0]);
 
     const histCapiT  = flexPeriods.reduce((s,p)=>s+(p.capi?.total||0),0);
     const histEnanoT = flexPeriods.reduce((s,p)=>s+(p.enano?.total||0),0);
@@ -2059,8 +2057,8 @@ function renderCorteFlexBody() {
             return `<div style="border-top:1px solid var(--sep)">
               <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 0;cursor:pointer" onclick="event.stopPropagation();toggleFlexQuincena('${p.id}')">
                 <div style="flex:1;min-width:0">
-                  <div style="font-weight:700;font-size:14px">${p.label}</div>
-                  <div style="font-size:11px;color:var(--text-3);margin-top:1px">Cerrado ${p.closedAt}</div>
+                  <div style="font-weight:700;font-size:14px">${p.half===1?'1ª quincena':'2ª quincena'}</div>
+                  <div style="font-size:11px;color:var(--text-3);margin-top:1px">${p.label} · Cerrado ${p.closedAt}</div>
                   <div style="display:flex;gap:8px;margin-top:3px;flex-wrap:wrap">
                     <span style="font-size:11px;color:var(--blue);font-weight:600">C $${fmt(qCapiT)}</span>
                     <span style="font-size:11px;color:var(--purple);font-weight:600">E $${fmt(qEnanoT)}</span>
