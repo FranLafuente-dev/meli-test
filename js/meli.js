@@ -25,6 +25,8 @@ const _meliRefreshing = {};
 // Cuentas que fallaron por error transitorio en el último sync (token presente pero sin señal)
 const _meliSyncFailedAccts = new Set();
 let _meliRetryTimer = null; // timer de auto-retry para fallas transitorias
+// Contador de refreshes fallidos consecutivos por cuenta (invalid_grant) — no borrar token hasta X fallos
+const _meliInvalidCount = { capi: 0, enano: 0 };
 
 // ─── ALERTA DESCONEXIÓN — notifica siempre, incluso en background ─────────────
 let _lastDisconnectNotifAt = 0;
@@ -59,9 +61,10 @@ async function meliInit() {
   startMeliPolling();
   _meliSetupVisibilityWatch();
   if (meliTokens.capi || meliTokens.enano) syncMeli(false);
-  // Modal de alerta si hay cuentas desconectadas (solo si hubo integración previa)
+  // Modal de alerta solo si la cuenta nunca fue conectada (sin refreshToken guardado).
+  // Un token expirado o un refresh fallido NO es motivo para pedir reconexión — se reintenta.
   if (meliAppId) {
-    const disc = ['capi', 'enano'].filter(a => !meliTokens[a]);
+    const disc = ['capi', 'enano'].filter(a => !meliTokens[a]?.refreshToken);
     if (disc.length) _meliShowReconnectModal(disc);
   }
 }
@@ -357,19 +360,24 @@ async function _meliRefreshToken(account) {
 async function _meliGetToken(account) {
   const ac = meliTokens[account];
   if (!ac) return null;
-  if (Date.now() < ac.expiresAt) return ac.token;
+  if (Date.now() < ac.expiresAt) {
+    _meliInvalidCount[account] = 0; // reset al usar token válido
+    return ac.token;
+  }
   const result = await _meliRefreshToken(account);
-  if (result === true) return meliTokens[account].token;
+  if (result === true) {
+    _meliInvalidCount[account] = 0;
+    return meliTokens[account].token;
+  }
+  // Siempre marcar como falla transitoria — NUNCA borrar el token automáticamente.
+  // El usuario conectó una vez y solo él puede desconectar desde Ajustes MELI.
+  _meliSyncFailedAccts.add(account);
   if (result === 'invalid') {
-    meliTokens[account] = null;
-    _meliSaveToken(account);
-    _updateMeliConnectionBanner();
-    updateMeliSettingsUI();
-    toast(`⚠️ MELI ${account.toUpperCase()} desconectada — abrí Ajustes MELI`);
-    _notifyDisconnected(account.toUpperCase());
-  } else {
-    // false = error transitorio — marcar para mostrar advertencia en el banner del sync
-    _meliSyncFailedAccts.add(account);
+    _meliInvalidCount[account] = (_meliInvalidCount[account] || 0) + 1;
+    // Solo notificar en background después de 5 fallos consecutivos para no molestar
+    if (_meliInvalidCount[account] === 5) {
+      _notifyDisconnected(account.toUpperCase());
+    }
   }
   return null;
 }
