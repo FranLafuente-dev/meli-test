@@ -667,6 +667,20 @@ function updateMeliBadge() {
   const n = meliSuggestions.length;
   badge.textContent = n > 0 ? String(n) : '';
   badge.classList.toggle('show', n > 0);
+  // Contadores por cuenta encima del nombre en el selector del formulario
+  for (const acct of ['capi', 'enano']) {
+    const btn = document.querySelector(`.toggle-btn[data-cuenta="${acct}"]`);
+    if (!btn) continue;
+    const ct = meliSuggestions.filter(s => s.account === acct).length;
+    let span = btn.querySelector('.cuenta-meli-ct');
+    if (!span) {
+      span = document.createElement('span');
+      span.className = 'cuenta-meli-ct';
+      btn.prepend(span);
+    }
+    span.textContent = ct > 0 ? String(ct) : '';
+    btn.classList.toggle('has-meli-ct', ct > 0);
+  }
   if (typeof updateAppBadge === 'function') updateAppBadge();
 }
 window.updateMeliBadge = updateMeliBadge;

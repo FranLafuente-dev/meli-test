@@ -641,7 +641,13 @@ input:-webkit-autofill:focus {
   flex: 1; padding: 9px; text-align: center; border: none; cursor: pointer;
   border-radius: 10px; font-size: 13px; font-weight: 700;
   color: var(--text-3); background: none; transition: color 0.18s, background 0.18s, box-shadow 0.18s, transform 0.18s; font-family: inherit;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
 }
+.cuenta-meli-ct {
+  display: none; font-size: 10px; font-weight: 800; color: var(--accent);
+  line-height: 1; letter-spacing: 0;
+}
+.toggle-btn.has-meli-ct .cuenta-meli-ct { display: block; }
 .toggle-btn.active {
   background: var(--card); color: var(--text);
   box-shadow: 0 1px 8px rgba(0,0,0,0.18); border: 1px solid var(--border-hi);

@@ -1357,10 +1357,29 @@ function setEnvio(t) {
   V('pe-fields').style.display=t==='PE'?'flex':'none';
 }
 
+function _formEnterNext(id) {
+  const isEnano = curCuenta === 'enano';
+  const isFlex  = curEnvio  === 'FLEX';
+  if (id === 'f-nombre')    return isEnano ? 'f-provincia' : (isFlex ? 'f-localidad' : 'f-importe-pe');
+  if (id === 'f-provincia') return 'f-iibb';
+  if (id === 'f-iibb')      return isFlex ? 'f-localidad' : 'f-importe-pe';
+  return null; // f-importe-flex / f-importe-pe: blur (cierra teclado)
+}
+
 function setupFormListeners() {
   document.querySelectorAll('[data-cuenta]').forEach(b=>b.addEventListener('click',()=>setCuenta(b.dataset.cuenta)));
   document.querySelectorAll('[data-envio]').forEach(b=>b.addEventListener('click',()=>setEnvio(b.dataset.envio)));
   V('f-importe-flex').addEventListener('input',updateNeto);
+  // Enter: avanzar entre campos; en el último cerrar teclado
+  ['f-nombre','f-provincia','f-iibb','f-importe-flex','f-importe-pe'].forEach(id => {
+    V(id)?.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const nextId = _formEnterNext(id);
+      if (nextId) V(nextId)?.focus();
+      else e.target.blur();
+    });
+  });
   // Title case en tiempo real para campos de nombre
   function liveTitleCase(e) {
     const el = e.target, pos = el.selectionStart, val = el.value;
