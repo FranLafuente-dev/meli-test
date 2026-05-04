@@ -51,9 +51,8 @@ async function meliInit() {
 
   _meliLoadLocal();
   await _meliLoadFirestore();
-  // Registrar tokens existentes en el Worker (sube config + tokens al KV de Cloudflare)
-  // Esto garantiza que el Worker siempre tenga los tokens más recientes disponibles
-  _meliSyncToWorker();
+  // Subir config al Worker (fire-and-forget — solo appId/secret, no tokens)
+  _meliSyncToWorkerConfig();
   // Refresh inmediato si el access_token ya expiró (antes del primer sync)
   await Promise.all(['capi', 'enano'].map(async acct => {
     const ac = meliTokens[acct];
@@ -61,6 +60,8 @@ async function meliInit() {
       await _meliRefreshToken(acct);
     }
   }));
+  // Garantizar que los tokens estén en el KV del Worker con retry (no bloquea el arranque)
+  Promise.all(['capi', 'enano'].map(a => _meliSyncToWorkerAccount(a))).catch(() => {});
   updateMeliSettingsUI();
   _updateMeliConnectionBanner();
   _meliWatchTokens(); // listener en tiempo real — propaga tokens renovados a todos los dispositivos
@@ -188,33 +189,14 @@ async function _meliSaveToken(acct) {
 }
 
 // ─── SINCRONIZACIÓN CON WORKER (KV de Cloudflare) ────────────────────────────
-// Sube appId/secret y tokens actuales al Worker para que él maneje los refreshes
-function _meliSyncToWorker() {
+// Solo sube appId/secret — los tokens se suben por separado con retry via _meliSyncToWorkerAccount
+function _meliSyncToWorkerConfig() {
   if (!meliAppId) return;
-  // Subir config (fire-and-forget)
   fetch(`${MELI_WORKER_BASE}/api/config`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ appId: meliAppId, secret: meliSecret || undefined }),
   }).catch(() => {});
-  // Subir tokens existentes
-  for (const acct of ['capi', 'enano']) {
-    const ac = meliTokens[acct];
-    if (ac?.refreshToken) {
-      fetch(`${MELI_WORKER_BASE}/api/token/store`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          account:      acct,
-          token:        ac.token,
-          refreshToken: ac.refreshToken,
-          expiresAt:    ac.expiresAt,
-          appId:        meliAppId,
-          secret:       meliSecret || undefined,
-        }),
-      }).catch(() => {});
-    }
-  }
 }
 
 // Guarda solo App ID y Secret — merge:true para no tocar los tokens
@@ -461,22 +443,29 @@ async function _meliRefreshToken(account) {
   try { return await p; } finally { _meliRefreshing[account] = null; }
 }
 
-// Sube el token de UNA cuenta al Worker (usado en bootstrap y post-refresh local)
-function _meliSyncToWorkerAccount(account) {
+// Sube el token de UNA cuenta al Worker — reintenta hasta 3 veces para garantizar que el cron lo encuentre
+async function _meliSyncToWorkerAccount(account) {
   const ac = meliTokens[account];
-  if (!ac?.refreshToken) return Promise.resolve();
-  return fetch(`${MELI_WORKER_BASE}/api/token/store`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      account,
-      token:        ac.token,
-      refreshToken: ac.refreshToken,
-      expiresAt:    ac.expiresAt,
-      appId:        meliAppId,
-      secret:       meliSecret || undefined,
-    }),
-  }).catch(() => {});
+  if (!ac?.refreshToken) return;
+  const body = JSON.stringify({
+    account,
+    token:        ac.token,
+    refreshToken: ac.refreshToken,
+    expiresAt:    ac.expiresAt,
+    appId:        meliAppId,
+    secret:       meliSecret || undefined,
+  });
+  for (let i = 0; i < 3; i++) {
+    try {
+      const res = await fetch(`${MELI_WORKER_BASE}/api/token/store`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+      if (res.ok) return;
+    } catch(_) {}
+    if (i < 2) await new Promise(r => setTimeout(r, 2000 * (i + 1)));
+  }
 }
 
 // Obtener token válido (renueva automáticamente con refresh_token)
