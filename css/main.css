@@ -858,7 +858,14 @@ input:-webkit-autofill:focus {
 .stock-product-name {
   font-size: 15px; font-weight: 700; padding-bottom: 10px;
   border-bottom: 1px solid var(--sep); margin-bottom: 4px;
+  display: flex; justify-content: space-between; align-items: center;
 }
+.stock-product-total {
+  font-size: 13px; font-weight: 700; color: var(--blue);
+  background: rgba(56,189,248,.12); border-radius: 10px;
+  padding: 1px 8px; min-width: 28px; text-align: center;
+}
+.stock-product-total.negativo { color: var(--red); background: rgba(239,68,68,.12); }
 .stock-row {
   display: flex; align-items: center; justify-content: space-between;
   padding: 9px 0; border-bottom: 1px solid var(--sep);

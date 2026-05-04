@@ -2532,8 +2532,10 @@ function renderStock() {
     const conStock=talles.filter(t=>(stock[`${p}_${t}`]??0)>0);
     const sinStock=talles.filter(t=>(stock[`${p}_${t}`]??0)===0);
     const pEnc=encodeURIComponent(p);
+    const total=talles.reduce((s,t)=>s+(stock[`${p}_${t}`]??0),0);
+    const totCls=total<0?'negativo':'';
     return `<div class="card stock-product-card">
-      <div class="stock-product-name">${p}</div>
+      <div class="stock-product-name">${p}<span class="stock-product-total ${totCls}">${total}</span></div>
       ${conStock.length
         ? conStock.map(t=>renderStockRow(p,t)).join('')
         : `<div class="hint-text" style="padding:6px 0;color:var(--red)">Sin stock disponible</div>`}
