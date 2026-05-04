@@ -14,8 +14,11 @@ const PRODUCTOS_FIJO = {
 };
 const TALLES      = [38,39,40,41,42,43,44,45];
 const TALLES_ESP  = [43,44,45];
-const COSTO_COMUN = 21900;
-const COSTO_ESP   = 22400;
+const COSTO_COMUN             = 22400;
+const COSTO_ESP               = 22900;
+const COSTO_REMERA_COLAPINTO  = 7500;
+const COSTO_BANDERA_60X90     = 2700;
+const COSTO_BANDERA_90X150    = 4200;
 const H24         = 86400000;
 const LS_ORDERS        = 'fs_orders_v4';
 const LS_STOCK         = 'fs_stock_v3';
@@ -1810,11 +1813,24 @@ function textoEnano(pend) {
   L.push('',`*Total acreditado a mp enano $${fmt(tot)}*`); return L.join('\n');
 }
 function textoCostos(pend,c) {
-  let e=0,n=0; pend.forEach(o=>(o.items||[]).forEach(i=>TALLES_ESP.includes(i.talle)?e++:n++));
+  let e=0,n=0,b60=0,b90=0,rc=0;
+  pend.forEach(o=>(o.items||[]).forEach(i=>{
+    if(i.producto==='Banderas'){
+      if(i.talle==='60x90')b60++; else if(i.talle==='90x150')b90++;
+    } else if(i.producto==='Remeras Colapinto'){
+      rc++;
+    } else {
+      TALLES_ESP.includes(i.talle)?e++:n++;
+    }
+  }));
   const L=[`*Costos ${c.toUpperCase()}*`];
-  if(e>0)L.push(`${e} cat especiales $${fmt(COSTO_ESP)}`);
-  if(n>0)L.push(`${n} cat comunes $${fmt(COSTO_COMUN)}`);
-  L.push('',`*Total costos $${fmt(e*COSTO_ESP+n*COSTO_COMUN)}*`); return L.join('\n');
+  if(e>0)  L.push(`${e} cat especiales $${fmt(COSTO_ESP)}`);
+  if(n>0)  L.push(`${n} cat comunes $${fmt(COSTO_COMUN)}`);
+  if(b60>0)L.push(`${b60} bandera 60x90 $${fmt(COSTO_BANDERA_60X90)}`);
+  if(b90>0)L.push(`${b90} bandera 90x150 $${fmt(COSTO_BANDERA_90X150)}`);
+  if(rc>0) L.push(`${rc} remera Colapinto $${fmt(COSTO_REMERA_COLAPINTO)}`);
+  const tot=e*COSTO_ESP+n*COSTO_COMUN+b60*COSTO_BANDERA_60X90+b90*COSTO_BANDERA_90X150+rc*COSTO_REMERA_COLAPINTO;
+  L.push('',`*Total costos $${fmt(tot)}*`); return L.join('\n');
 }
 function fmtItemsCorte(items) {
   if(!items||!items.length)return'';
