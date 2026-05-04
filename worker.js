@@ -39,9 +39,9 @@ async function getValidToken(kv, account) {
   const stored = await kvGet(kv, `token:${account}`);
   if (!stored) return { ok: false, reason: 'no_token' };
 
-  // Token aún válido: devolver directamente
+  // Token aún válido: devolver siempre con refreshToken (el cron puede haberlo rotado)
   if ((stored.expiresAt || 0) > Date.now() + 5 * 60 * 1000) {
-    return { ok: true, token: stored.token, expiresAt: stored.expiresAt };
+    return { ok: true, token: stored.token, expiresAt: stored.expiresAt, refreshToken: stored.refreshToken };
   }
 
   // Token expirado: intentar obtener el lock para refrescar
@@ -54,14 +54,14 @@ async function getValidToken(kv, account) {
       return { ok: true, token: fresh.token, expiresAt: fresh.expiresAt };
     }
     // Si después de esperar sigue expirado, devolver el que tenemos (mejor que nada)
-    return { ok: true, token: stored.token, expiresAt: stored.expiresAt, stale: true };
+    return { ok: true, token: stored.token, expiresAt: stored.expiresAt, stale: true, refreshToken: stored.refreshToken };
   }
 
   try {
     // Doble-check: puede que otra instancia haya refrescado entre el kvGet y el lock
     const recheck = await kvGet(kv, `token:${account}`);
     if (recheck && (recheck.expiresAt || 0) > Date.now() + 60000) {
-      return { ok: true, token: recheck.token, expiresAt: recheck.expiresAt };
+      return { ok: true, token: recheck.token, expiresAt: recheck.expiresAt, refreshToken: recheck.refreshToken };
     }
 
     const cfg = await kvGet(kv, 'config');
@@ -95,6 +95,52 @@ async function getValidToken(kv, account) {
     };
     await kvPut(kv, `token:${account}`, newToken, { expirationTtl: 2592000 }); // 30 días — refresh_token dura meses
     return { ok: true, token: newToken.token, expiresAt: newToken.expiresAt, refreshToken: newToken.refreshToken };
+  } finally {
+    await releaseLock(kv, account);
+  }
+}
+
+// ── Refresh proactivo — llamado por el cron cada hora ────────────────────────────
+// Renueva el token si vence en menos de 5 horas, sin esperar a que un cliente lo pida.
+// Garantiza que el KV siempre tenga tokens frescos aunque todos los dispositivos estén cerrados.
+async function proactiveRefresh(kv, account) {
+  const stored = await kvGet(kv, `token:${account}`);
+  if (!stored?.refreshToken) return; // cuenta no configurada
+  if ((stored.expiresAt || 0) > Date.now() + 5 * 60 * 60 * 1000) return; // más de 5h restantes
+
+  const gotLock = await tryAcquireLock(kv, account);
+  if (!gotLock) return; // otro Worker ya está refrescando
+
+  try {
+    // Doble-check: otra instancia puede haber refrescado entre el read y el lock
+    const recheck = await kvGet(kv, `token:${account}`);
+    if (recheck && (recheck.expiresAt || 0) > Date.now() + 5 * 60 * 60 * 1000) return;
+
+    const cfg = await kvGet(kv, 'config');
+    if (!cfg?.appId) return;
+
+    const params = new URLSearchParams({
+      grant_type:    'refresh_token',
+      client_id:     cfg.appId,
+      refresh_token: stored.refreshToken,
+    });
+    if (cfg.secret) params.set('client_secret', cfg.secret);
+
+    const res  = await fetch(`${MELI_API}/oauth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: params,
+    });
+    const data = await res.json();
+    if (!res.ok || !data.access_token) return; // fallo → el siguiente cron reintentará
+
+    await kvPut(kv, `token:${account}`, {
+      token:        data.access_token,
+      refreshToken: data.refresh_token || stored.refreshToken,
+      expiresAt:    Date.now() + (data.expires_in * 1000) - 120000,
+    }, { expirationTtl: 2592000 });
+  } catch(_) {
+    // Error de red → el siguiente cron reintentará
   } finally {
     await releaseLock(kv, account);
   }
@@ -189,5 +235,14 @@ export default {
     }
 
     return new Response('Not found', { status: 404, headers: CORS });
+  },
+
+  // Cron: se ejecuta cada hora en Cloudflare, renueva tokens antes de que expiren
+  async scheduled(_event, env, _ctx) {
+    const kv = env.MELI_TOKENS;
+    await Promise.all([
+      proactiveRefresh(kv, 'capi'),
+      proactiveRefresh(kv, 'enano'),
+    ]);
   },
 };

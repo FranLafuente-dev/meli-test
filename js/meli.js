@@ -351,6 +351,23 @@ async function _meliRefreshToken(account) {
     const ac = meliTokens[account];
     if (!ac?.refreshToken) return false;
 
+    // ── PASO 0: Firestore-first — si otro dispositivo o el cron ya renovó, adoptarlo ──
+    // Evita race condition entre dispositivos: si Firestore ya tiene un token fresco,
+    // no es necesario refrescar — simplemente adoptarlo.
+    try {
+      const fsSnap = await db.collection('meta').doc('meliConfig').get();
+      if (fsSnap.exists) {
+        const fsToken = fsSnap.data()[account] || null;
+        if (fsToken?.refreshToken && (fsToken.expiresAt || 0) > Date.now() + 5 * 60 * 1000) {
+          meliTokens[account] = fsToken;
+          _meliSaveTokensLocal();
+          _meliSyncToWorkerAccount(account); // asegurar que el Worker también tiene el token fresco
+          updateMeliSettingsUI();
+          return true;
+        }
+      }
+    } catch(_e) {} // offline o error → continuar con Worker
+
     // ── PASO 1: pedir token válido al Worker ─────────────────────────────────
     // El Worker usa KV con lock — garantiza que solo una instancia refresca
     // aunque haya 3 dispositivos pidiendo al mismo tiempo.
@@ -361,10 +378,9 @@ async function _meliRefreshToken(account) {
         if (data?.token) {
           meliTokens[account] = {
             ...meliTokens[account],
-            token:     data.token,
-            expiresAt: data.expiresAt,
-            // Si el Worker refrescó, viene refreshToken nuevo → actualizar
-            ...(data.refreshToken ? { refreshToken: data.refreshToken } : {}),
+            token:        data.token,
+            expiresAt:    data.expiresAt,
+            refreshToken: data.refreshToken || meliTokens[account]?.refreshToken || ac.refreshToken,
           };
           await _meliSaveToken(account);
           updateMeliSettingsUI();
@@ -380,9 +396,9 @@ async function _meliRefreshToken(account) {
           if (data2?.token) {
             meliTokens[account] = {
               ...meliTokens[account],
-              token:     data2.token,
-              expiresAt: data2.expiresAt,
-              ...(data2.refreshToken ? { refreshToken: data2.refreshToken } : {}),
+              token:        data2.token,
+              expiresAt:    data2.expiresAt,
+              refreshToken: data2.refreshToken || meliTokens[account]?.refreshToken || ac.refreshToken,
             };
             await _meliSaveToken(account);
             updateMeliSettingsUI();
